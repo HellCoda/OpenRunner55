@@ -1,6 +1,21 @@
+# Python
 __pycache__/
-*.pyc
-node_modules/
+*.py[cod]
+*.egg-info/
+dist/
+*.egg
+.venv*/
 .env
-*.log
+
+# IDE / Outils
+.vscode/
+.obsidian/
+.spike*/
+spike-*/
+
+# Trash
+.trash/
+
+# OS
 .DS_Store
+Thumbs.db
