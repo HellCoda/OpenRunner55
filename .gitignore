@@ -6,6 +6,9 @@ dist/
 *.egg
 .venv*/
 .env
+.coverage
+htmlcov/
+.pytest_cache/
 
 # IDE / Outils
 .vscode/
