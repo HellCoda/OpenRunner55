@@ -50,6 +50,7 @@ class LogRecord:
 
     id: int
     timestamp: str
+    operation: str
     level: str
     message: str
 
@@ -85,26 +86,38 @@ class OperationLogger:
         safe_message = self.redact(message)
         conn = self._db.conn
         conn.execute(
-            "INSERT INTO operation_logs (level, message) VALUES (?, ?)",
-            (level, safe_message),
+            "INSERT INTO operation_logs (operation, level, message) VALUES (?, ?, ?)",
+            (operation, level, safe_message),
         )
         conn.commit()
 
     # -- lecture ------------------------------------------------------------
 
-    def get_logs(self, limit: int = 100, level: str | None = None) -> list[LogRecord]:
-        """Retourne les logs les plus récents, optionnellement filtrés par niveau.
+    def get_logs(
+        self,
+        limit: int = 100,
+        level: str | None = None,
+        operation: str | None = None,
+    ) -> list[LogRecord]:
+        """Retourne les logs les plus récents, filtrables par niveau et/ou opération.
 
         :param level: "DEBUG" | "INFO" | "WARN" | "ERROR" | None (tous niveaux)
+        :param operation: nom d'opération exact (ex: "auth.login") | None (toutes)
         """
-        query = "SELECT id, timestamp, level, message FROM operation_logs"
+        query = "SELECT id, timestamp, operation, level, message FROM operation_logs"
         params: list[object] = []
         if level is not None:
             if level.upper() not in _VALID_LEVELS:
                 raise ValueError(f"Niveau invalide : {level!r} (attendu DEBUG|INFO|WARN|ERROR)")
             query += " WHERE level = ?"
             params.append(level.upper())
+        if operation is not None:
+            query += " WHERE operation = ?" if " WHERE " not in query else " AND operation = ?"
+            params.append(operation)
         query += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
         rows = self._db.conn.execute(query, params).fetchall()
-        return [LogRecord(r["id"], r["timestamp"], r["level"], r["message"]) for r in rows]
+        return [
+            LogRecord(r["id"], r["timestamp"], r["operation"], r["level"], r["message"])
+            for r in rows
+        ]

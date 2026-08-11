@@ -16,7 +16,7 @@ import sqlite3
 from pathlib import Path
 
 DEFAULT_DB_PATH = Path("~/.local/share/openrunner55/openrunner.db").expanduser()
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA = """
 -- Historique des synchronisations
@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS sync_history (
 CREATE TABLE IF NOT EXISTS operation_logs (
     id        INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp TEXT    NOT NULL DEFAULT (datetime('now')),
+    operation TEXT    NOT NULL DEFAULT '',
     level     TEXT    NOT NULL DEFAULT 'INFO' CHECK (level IN ('DEBUG', 'INFO', 'WARN', 'ERROR')),
     message   TEXT    NOT NULL
 );
@@ -109,3 +110,20 @@ class Database:
             raise RuntimeError(
                 f"Base plus récente que le code (v{row['version']} > v{SCHEMA_VERSION})"
             )
+        self._migrate(row["version"] if row is not None else SCHEMA_VERSION)
+
+    def _migrate(self, from_version: int) -> None:
+        """Applique les migrations légères (ADR-005) et met à jour la version."""
+        if from_version < 2:
+            # v1 → v2 : colonne operation dans operation_logs (tracabilité des logs)
+            columns = {
+                c["name"] for c in self._conn.execute("PRAGMA table_info(operation_logs)")
+            }
+            if "operation" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE operation_logs ADD COLUMN operation TEXT NOT NULL DEFAULT ''"
+                )
+            self._conn.execute(
+                "UPDATE schema_version SET version = ?", (SCHEMA_VERSION,)
+            )
+            self._conn.commit()

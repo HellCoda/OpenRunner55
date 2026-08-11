@@ -35,7 +35,18 @@ class TestDatabase:
         db.connect()
         try:
             version = db.conn.execute("SELECT version FROM schema_version").fetchone()["version"]
-            assert version == 1
+            assert version == 2
+        finally:
+            db.close()
+
+    def test_operation_logs_has_operation_column(self) -> None:
+        db = Database(":memory:")
+        db.connect()
+        try:
+            columns = {
+                row["name"] for row in db.conn.execute("PRAGMA table_info(operation_logs)")
+            }
+            assert "operation" in columns
         finally:
             db.close()
 
@@ -75,6 +86,46 @@ class TestDatabase:
         assert "share" in relative.parts
         assert relative.name == "openrunner.db"
 
+    def test_migration_v1_to_v2_adds_operation_column(self, tmp_path) -> None:
+        """Une base v1 (sans colonne operation) est migrée en v2 à la connexion."""
+        path = tmp_path / "old.db"
+        conn = sqlite3.connect(str(path))
+        conn.executescript(
+            """
+            CREATE TABLE operation_logs (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT    NOT NULL DEFAULT (datetime('now')),
+                level     TEXT    NOT NULL DEFAULT 'INFO'
+                          CHECK (level IN ('DEBUG', 'INFO', 'WARN', 'ERROR')),
+                message   TEXT    NOT NULL
+            );
+            CREATE TABLE schema_version (version INTEGER NOT NULL);
+            INSERT INTO schema_version (version) VALUES (1);
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        db = Database(path)
+        db.connect()
+        try:
+            columns = {
+                row["name"] for row in db.conn.execute("PRAGMA table_info(operation_logs)")
+            }
+            assert "operation" in columns
+            version = db.conn.execute("SELECT version FROM schema_version").fetchone()["version"]
+            assert version == 2
+            # Les données existantes survivent à la migration (DEFAULT '')
+            db.conn.execute("INSERT INTO operation_logs (level, message) VALUES ('INFO', 'legacy')")
+            db.conn.commit()
+            row = db.conn.execute(
+                "SELECT operation, message FROM operation_logs ORDER BY id DESC LIMIT 1"
+            ).fetchone()
+            assert row["operation"] == ""
+            assert row["message"] == "legacy"
+        finally:
+            db.close()
+
     def test_connect_twice_is_safe(self) -> None:
         db = Database(":memory:")
         db.connect()
@@ -97,8 +148,46 @@ class TestOperationLogger:
             logger.log("sync.upload", "ok", "3 fichiers uploadés")
             rows = logger.get_logs()
             assert len(rows) == 1
+            assert rows[0].operation == "sync.upload"
             assert rows[0].level == "INFO"
             assert "3 fichiers uploadés" in rows[0].message
+        finally:
+            db.close()
+
+    def test_log_persists_operation_in_db(self) -> None:
+        db, logger = self._make_logger()
+        try:
+            logger.log("auth.login", "ok", "connexion réussie")
+            row = db.conn.execute(
+                "SELECT operation, level, message FROM operation_logs"
+            ).fetchone()
+            assert row["operation"] == "auth.login"
+            assert row["level"] == "INFO"
+        finally:
+            db.close()
+
+    def test_get_logs_filters_by_operation(self) -> None:
+        db, logger = self._make_logger()
+        try:
+            logger.log("auth.login", "ok", "connexion réussie")
+            logger.log("sync.download", "ok", "3 workouts")
+            logger.log("auth.login", "error", "échec")
+            auth_logs = logger.get_logs(operation="auth.login")
+            assert len(auth_logs) == 2
+            assert {r.operation for r in auth_logs} == {"auth.login"}
+        finally:
+            db.close()
+
+    def test_get_logs_filters_by_level_and_operation(self) -> None:
+        db, logger = self._make_logger()
+        try:
+            logger.log("auth.login", "ok", "connexion réussie")
+            logger.log("auth.login", "error", "échec")
+            logger.log("sync.download", "error", "autre échec")
+            rows = logger.get_logs(level="ERROR", operation="auth.login")
+            assert len(rows) == 1
+            assert rows[0].operation == "auth.login"
+            assert rows[0].level == "ERROR"
         finally:
             db.close()
 
