@@ -81,8 +81,35 @@
 
 ---
 
+## Étape 2 — `watch/filesystem.py` (livré, commit `cba31ae`)
+
+**Livrables** : `watch/filesystem.py`, `tests/unit/test_filesystem.py` (12 tests).
+Régression : 99 tests verts.
+
+### Choix
+
+1. **Convention de chemin relatif** : les méthodes prennent/retournent des chemins
+   **relatifs à `GARMIN/`** (ex. `Path("Workouts/foo.FIT")`). Un chemin retourné
+   par `list_fit_files()` est directement utilisable avec `read_fit`/`write_fit`.
+   Le module résout l'absolu en interne — le service n'a pas à connaître le
+   point de montage.
+2. **Extension `.FIT` insensible à la casse** : FAT32 (casse-insensible) ; la
+   montre mélange `.fit`/`.FIT` (cf. `tree-FR55.md`). Filtre `suffix.lower() == ".fit"`.
+3. **`list_fit_files` ignore les sous-dossiers** (`Workouts/Guided`,
+   `Workouts/Schedule`) et les fichiers non-FIT.
+4. **Catégorie invalide → `ValueError`** (fail fast, évite un bug silencieux).
+
+### Écart ADR/brief
+
+| Référence | Écart | Justification |
+|-----------|-------|---------------|
+| ADR-002 : `write_fit(...) -> bool` | `-> None` + levée `OSError` | Le brief Epic 2 l'impose explicitement (« ne retourne pas de booléen silencieux »). Cohérent avec `read_fit`/`Path.write_bytes` qui lèvent déjà `OSError`. |
+
+---
+
 ## Journal des étapes
 
 | Étape | Commit | Tests | État |
 |-------|--------|-------|------|
 | 1 — détection USB | `88e9d20` | 87 verts | ✅ validé |
+| 2 — fichiers FIT | `cba31ae` | 99 verts | ✅ validé |
