@@ -23,7 +23,14 @@ class FakeGarmin:
         self.activities_result = []
         self.workouts_errors: list[Exception] = []
         self.activities_errors: list[Exception] = []
-        self.calls: dict[str, int] = {"get_workouts": 0, "get_activities": 0}
+        self.download_result: bytes = b""
+        self.download_errors: list[Exception] = []
+        self.downloaded_ids: list[int] = []
+        self.calls: dict[str, int] = {
+            "get_workouts": 0,
+            "get_activities": 0,
+            "download_workout": 0,
+        }
 
     def get_workouts(self, start: int = 0, limit: int = 20) -> list[dict]:
         self.calls["get_workouts"] += 1
@@ -36,6 +43,13 @@ class FakeGarmin:
         if self.activities_errors:
             raise self.activities_errors.pop(0)
         return self.activities_result
+
+    def download_workout(self, workout_id: int) -> bytes:
+        self.calls["download_workout"] += 1
+        self.downloaded_ids.append(workout_id)
+        if self.download_errors:
+            raise self.download_errors.pop(0)
+        return self.download_result
 
 
 class FakeAuthenticator:
@@ -205,3 +219,47 @@ class TestReLoginOn401:
         client = GarminClient(authenticator=fake_auth, garmin=fake_garmin)
         with pytest.raises(GarminConnectAuthenticationError):
             client.get_workouts()
+
+
+@pytest.mark.unit
+class TestDownloadWorkout:
+    def test_returns_bytes(self) -> None:
+        fake_garmin = FakeGarmin()
+        fake_garmin.download_result = b"\x0e\x10\x0e\x00"  # en-tête FIT
+        client = GarminClient(authenticator=FakeAuthenticator(), garmin=fake_garmin)
+        assert client.download_workout(123) == b"\x0e\x10\x0e\x00"
+
+    def test_forwards_workout_id(self) -> None:
+        fake_garmin = FakeGarmin()
+        client = GarminClient(authenticator=FakeAuthenticator(), garmin=fake_garmin)
+        client.download_workout(42)
+        assert fake_garmin.downloaded_ids == [42]
+
+    def test_inherits_inter_request_delay(self, fake_sleep, fake_monotonic) -> None:
+        fake_monotonic["now"] = 0.0
+        client = GarminClient(authenticator=FakeAuthenticator(), garmin=FakeGarmin())
+        client.get_workouts()  # t=0
+        fake_monotonic["now"] = 1.0  # 1s plus tard : il reste 2s
+        client.download_workout(1)
+        assert fake_sleep == [2.0]
+
+    def test_retries_on_429(self, fake_sleep) -> None:
+        fake_garmin = FakeGarmin()
+        fake_garmin.download_errors = [GarminConnectTooManyRequestsError("429")]
+        fake_garmin.download_result = b"\x0e\x10"
+        client = GarminClient(authenticator=FakeAuthenticator(), garmin=fake_garmin)
+        assert client.download_workout(1) == b"\x0e\x10"
+        assert fake_garmin.calls["download_workout"] == 2
+        assert fake_sleep == [1.0]  # backoff 1s au premier retry
+
+    def test_relogs_in_on_401(self, fake_sleep) -> None:
+        fake_garmin = FakeGarmin()
+        fake_garmin.download_errors = [GarminConnectAuthenticationError("401")]
+        fake_auth = FakeAuthenticator()
+        fresh_garmin = FakeGarmin()
+        fresh_garmin.download_result = b"\x0e\x10\x0e\x00"
+        fake_auth.clients.append(fresh_garmin)
+        client = GarminClient(authenticator=fake_auth, garmin=fake_garmin)
+        assert client.download_workout(7) == b"\x0e\x10\x0e\x00"
+        assert fresh_garmin.calls["download_workout"] == 1
+        assert fresh_garmin.downloaded_ids == [7]
