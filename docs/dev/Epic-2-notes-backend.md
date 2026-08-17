@@ -107,9 +107,41 @@ Régression : 99 tests verts.
 
 ---
 
+## Étape 3 — `store/transfers.py` + `store/history.py` (livré, commit `30db015`)
+
+**Livrables** : `store/transfers.py`, `store/history.py`, `store/__init__.py`
+(extension exports), `tests/unit/test_transfers.py` (11), `tests/unit/test_history.py`
+(10). Régression : 120 tests verts.
+
+### Choix / décisions
+
+1. **`is_transferred(file_name, direction, source=None)`** — concilie le brief
+   (2 args, nom `is_transferred`) et l'ADR-005 (`is_already_transferred`, 3 args,
+   dédup sur `(file_name, direction, source)`). `source` optionnel : sans lui,
+   comportement exact du brief ; avec lui, dédup précise. Validé par Franck.
+2. **`file_hash` NULL au MVP** — `mark_transferred` ne calcule pas de SHA256.
+3. **Validation des enums en `ValueError`** (direction, source, status) en amont
+   des contraintes CHECK SQLite : erreur claire plutôt qu'un `IntegrityError` brut.
+4. **`details` stocké tel quel** (TEXT) : c'est le service qui fournit la chaîne
+   JSON déjà sérialisée (`history.log_sync(..., details_json)`). Le store ne
+   transforme pas.
+5. **`store/__init__.py` étendu** pour exporter `TransferredFilesStore`,
+   `SyncHistoryStore`, `SyncRecord` (cohérence avec l'export existant).
+
+### Observé / à retenir
+
+- `mark_transferred` n'a **pas de contrainte d'unicité** : re-marquer le même
+  fichier crée une ligne dupliquée (sans impact fonctionnel, `is_transferred`
+  reste True). Un index unique `(file_name, direction, source)` est envisageable
+  en migration si besoin. Noté dans le docstring du module.
+- `SyncRecord` est un dataclass `frozen=True` (comme `LogRecord`) — immuable.
+
+---
+
 ## Journal des étapes
 
 | Étape | Commit | Tests | État |
 |-------|--------|-------|------|
 | 1 — détection USB | `88e9d20` | 87 verts | ✅ validé |
 | 2 — fichiers FIT | `cba31ae` | 99 verts | ✅ validé |
+| 3 — store (transfers + history) | `30db015` | 120 verts | ✅ validé |
