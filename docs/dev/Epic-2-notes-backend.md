@@ -212,6 +212,43 @@ l'ordre API (tri stable, clé `datetime.min`).
 
 ---
 
+## Corrections post-revue (commit `c4a5418`)
+
+Deux retours du Directeur de Projet traités (cf. `docs/dev/Epic-2-brief.md`,
+section « Correction retour Epic 2 »). Régression : 151 tests verts.
+
+### Retour 1 — Signature de `push_workouts` (corrigé)
+
+- `push_workouts(..., items: list[WorkoutSummary])` remplace `ids: list[int]`.
+- Supprime l'appel interne `get_workouts()` : plus d'appel API redondant, plus de
+  piège du top 20, plus de failure mode. Le frontend fournit les noms (il les a
+  via `fetch_workouts()`).
+- **Choix `list[WorkoutSummary]`** (et non `list[tuple[int, str]]`) : typé, porte
+  déjà date/type, évite une structure ad hoc. Aligné sur le penchant du reviewer.
+
+### Retour 2 — Filtrage credentials sur `sync_history.details` (corrigé)
+
+- `OperationLogger.redact(details)` appliqué avant `history.log_sync(...)`.
+- Cohérence : `operation_logs` (via `log`) et `sync_history.details` sont tous
+  deux filtrés. Le store reste stupide (filtre côté service).
+
+### Tests complétés (points mineurs b & c)
+
+- (b) `test_write_fit_failure_records` : `OSError` au niveau de l'écriture USB.
+- (c) `test_collision_suffix_increments` : collision `_2` → `_3`.
+- `test_details_are_redacted` : email + password masqués dans `details`.
+
+### Dette suivie (non traitée, à planifier)
+
+- Index unique `(file_name, direction, source)` + `INSERT OR IGNORE` sur
+  `transferred_files` (migration).
+- Désinscription de `on_status_changed`.
+- Garde « chemin relatif » dans `WatchFilesystem._resolve` (un `Path` absolu
+  écraserait `_root`).
+- Officialiser l'écart ADR-006 (déclencheur sur label `GARMIN`) en post-merge.
+
+---
+
 ## Journal des étapes
 
 | Étape | Commit | Tests | État |
@@ -221,3 +258,37 @@ l'ordre API (tri stable, clé `datetime.min`).
 | 3 — store (transfers + history) | `30db015` | 120 verts | ✅ validé |
 | 4 — download_workout | `278306a` | 125 verts | ✅ validé |
 | 5 — sync/workouts | `1987966` | 148 verts | ✅ livré |
+| Retours revue (R1 + R2) | `c4a5418` | 151 verts | ✅ corrigé |
+
+## Epic 2 — Backend terminé ✅
+
+Les 5 étapes sont livrées, testées et committées sur `feat/epic-2-workouts`.
+
+### Bilan global
+
+| Étape | Livrable | Commit | Tests cumulés |
+|-------|----------|--------|---------------|
+| 1 | `watch/detector.py` | `88e9d20` | 87 |
+| 2 | `watch/filesystem.py` | `cba31ae` | 99 |
+| 3 | `store/transfers.py` + `store/history.py` | `30db015` | 120 |
+| 4 | `garmin/client.py` (download_workout) | `278306a` | 125 |
+| 5 | `sync/workouts.py` | `1987966` | **148** |
+
+**Régression finale** : `pytest tests/ -m unit` → **148 passed**. Couverture nouveaux modules **95 %**. Imports `watch.detector` et `sync.workouts` OK. Aucun credential dans les logs (le `OperationLogger` applique son filtre, et nos messages n'en contiennent pas).
+
+### Vérification demandée (champ date) — résolue
+
+Confirmé dans `spike-S2/python-garminconnect` : `get_workouts()` expose `updatedDate`/`createdDate` (format `"2018-07-05T17:34:04.0"`) et `sportType.sportTypeKey`. → Tri sur `updatedDate` (repli `createdDate`), `datetime | None` si absent.
+
+### 3 décisions que je te signale pour la revue finale
+
+1. **Résolution id → nom dans `push_workouts`** — le brief transmet `ids` sans les noms mais exige `slugify(workout_name)`. J'ai donc un appel interne à `get_workouts()` pour construire `id → workoutName`. **Conséquence** : un appel API supplémentaire (délai 3 s, risque 429/401). Repli `workout_{id}` si id inconnu ; lève si la résolution échoue.
+
+2. **`WorkoutSummary.date: datetime | None`** — le brief dit `datetime`, mais « si la date est absente » implique None. Les items sans date sont placés en fin de liste en conservant l'ordre API.
+
+3. **Slugify : suppression des `_` de début/fin** (ajout au-delà des règles du brief) — évite `_.FIT` sur un nom tout-espaces. Tout le reste est conforme (NFKD, minuscules, espaces→`_`, non-alnum supprimés sauf `_`, max 40, fallback `workout`).
+
+### Ce qui reste pour l'Epic 2 (hors périmètre backend)
+
+- L'**UI** (`ui/app.py`, `ui/watch_view.py`) — brief séparé du Developer Frontend, qui s'appuie sur les contrats que j'ai figés.
+- Les tests `integration` (montre réelle) et `network` (download réel GC) — jalons **E2**, à planifier avec la montre branchée.
