@@ -209,8 +209,8 @@ ADR-002. Cœur métier de l'Epic 2.
 class WorkoutSummary:
     workout_id: int
     name: str
-    date: datetime       # pour le tri récent → ancien
-    type: str            # sport / catégorie
+    date: datetime | None   # pour le tri récent → ancien ; None si absente
+    type: str               # sport / catégorie
 
 @dataclass
 class SyncResult:
@@ -228,21 +228,34 @@ def push_workouts(
     transfers: TransferredFilesStore,
     history: SyncHistoryStore,
     logger: OperationLogger,
-    ids: list[int],
+    items: list[WorkoutSummary],
 ) -> SyncResult:
     """Télécharge, slugify, copie sur la montre, trace en base."""
 ```
 
-**Flux `push_workouts`** (par workout sélectionné) :
+> **Note contrat.** `push_workouts` reçoit `items: list[WorkoutSummary]`
+> (et non `ids: list[int]`) : le frontend a déjà appelé `fetch_workouts()`
+> pour afficher la liste, il dispose donc des noms. Cela évite un appel
+> API redondant à `get_workouts()` côté service (délai 3 s, risque 429/401,
+> limite top 20). Le service ne rappelle jamais `get_workouts()`.
 
-1. `client.download_workout(id)` → bytes `.FIT`
-2. `slugify(workout_name)` → nom de fichier (règles ci-dessous)
-3. Vérification collision : si `{slug}.FIT` existe déjà dans `Workouts/`,
-   suffixer `_2`, `_3`, etc. (via `watch.list_fit_files("Workouts")`)
-4. `watch.write_fit(Workouts/{slug}.FIT, bytes)` → copie USB
+**Flux `push_workouts`** (par workout de `items`) :
+
+1. `client.download_workout(item.workout_id)` → bytes `.FIT`
+2. `slugify(item.name)` → nom de fichier (règles ci-dessous) ; repli
+   `workout_{item.workout_id}` si `item.name` est vide
+3. Vérification collision : si `{slug}.FIT` existe déjà dans `Workouts/`
+   (comparaison insensible à la casse, FAT32), suffixer `_2`, `_3`, etc.
+   (via `watch.list_fit_files("Workouts")`)
+4. `watch.write_fit(Workouts/{slug}.FIT, bytes)` → copie USB (lève `OSError`)
 5. Si succès : `transfers.mark_transferred(slug_filename, "down", "workout")`
-6. Si échec : ajout à `SyncResult.errors`, on continue au suivant
-7. À la fin : `history.log_sync("down", success, status, details_json)`
+6. Si échec (`download_workout` ou `write_fit`) : ajout à `SyncResult.errors`,
+   on continue au suivant
+7. À la fin : `history.log_sync("down", success, status, details_json)` où
+   `details_json` est passé par `OperationLogger.redact()` (cohérence avec
+   `operation_logs` — aucun credential persisté). Statut dérivé :
+   `success` si 0 échec, `partial` si mixte, `failed` si tout échoué.
+   `items` vide → retour immédiat `SyncResult(0,0,0,[])`, pas de `log_sync`.
 
 **Règles de slugify** (ADR-002) :
 
@@ -345,3 +358,20 @@ passer (Epic 1 + Epic 2 backend). Le Directeur de Projet valide then merge.
 
 `feat/epic-2-workouts`. Commits fréquents avec messages conventionnels
 (`feat:`, `test:`, `chore:`). Un commit par étape minimum.
+
+## Corrections post-revue (commit `c4a5418`)
+
+Deux retours du Directeur de Projet traités après la livraison initiale :
+
+1. **Signature `push_workouts`** — reçoit `items: list[WorkoutSummary]` au
+   lieu de `ids: list[int]`. Supprime l'appel interne redondant à
+   `get_workouts()` (délai 3 s, risque 429/401, piège du top 20). Le
+   frontend dispose déjà des noms via `fetch_workouts()`.
+2. **Filtrage credentials sur `sync_history.details`** — `details` passé
+   par `OperationLogger.redact()` avant `log_sync()` (cohérence avec
+   `operation_logs`).
+
+Dette suivie (non bloquante) : index unique `(file_name, direction, source)`
+sur `transferred_files`, désinscription callback `on_status_changed`,
+garde `_resolve` sur chemin relatif, officialisation de l'écart ADR-006
+(déclencheur sur label `GARMIN`).

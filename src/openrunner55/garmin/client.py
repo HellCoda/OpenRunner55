@@ -15,8 +15,8 @@ Applique ADR-007 :
 Le retry 5xx / erreurs réseau est déjà géré en interne par la lib
 (`retry_attempts=3`, backoff avec jitter) — pas de double gestion.
 
-Seules les méthodes de l'Epic 1 sont exposées (`get_workouts`, `get_activities`).
-Les suivantes (download, upload) seront ajoutées avec les Epics 2 et 3.
+Méthodes exposées : `get_workouts`, `get_activities` (Epic 1) et
+`download_workout` (Epic 2). `upload_activity` sera ajoutée avec l'Epic 3.
 """
 
 from __future__ import annotations
@@ -108,7 +108,7 @@ class GarminClient:
                 ) from exc
             return self._invoke(method_name, *args, **kwargs)
 
-    # -- API publique (Epic 1) ----------------------------------------------
+    # -- API publique ----------------------------------------------------------
 
     def get_workouts(self, start: int = 0, limit: int = 20) -> list[dict]:
         """Retourne la liste des workouts Garmin (liste de dicts)."""
@@ -117,3 +117,12 @@ class GarminClient:
     def get_activities(self, start: int = 0, limit: int = 20) -> list[dict] | dict:
         """Retourne la liste des activités Garmin."""
         return self._call("get_activities", start, limit)
+
+    def download_workout(self, workout_id: int) -> bytes:
+        """Télécharge un workout au format .FIT (bytes) — Epic 2.
+
+        Hérite du délai inter-requêtes, du retry 429 et du re-login 401 via
+        `_call()` (ADR-007). Référence : `spike-S2/bloc5_roundtrip_workout.py`
+        (`garmin.download_workout(workoutId)` retourne les bytes du FIT).
+        """
+        return self._call("download_workout", workout_id)
