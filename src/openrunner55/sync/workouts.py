@@ -9,10 +9,10 @@ reçoit un chemin final et écrit des bytes, sans logique de nommage (ADR-002).
 Le nom affiché par la montre vient du champ `wkt_name` dans le FIT, pas du nom
 de fichier — le slug ne sert qu'à la lisibilité du système de fichiers FAT32.
 
-Décision (non couverte explicitement par le brief) : `push_workouts` reçoit des
-`ids: list[int]` sans les noms ; il résout donc `id → workoutName` via un appel
-interne à `client.get_workouts()` (même source que `fetch_workouts`). Si un id
-n'est pas trouvé, repli sur `workout_{id}` comme slug.
+`push_workouts` reçoit `items: list[WorkoutSummary]` (id + nom fournis par le
+frontend, qui a déjà appelé `fetch_workouts` pour afficher la liste) — aucun
+appel `get_workouts()` supplémentaire. Si le nom est vide, repli sur
+`workout_{id}` comme slug.
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ def push_workouts(
     transfers: TransferredFilesStore,
     history: SyncHistoryStore,
     logger: OperationLogger,
-    ids: list[int],
+    items: list[WorkoutSummary],
 ) -> SyncResult:
     """Télécharge, slugify, copie sur la montre, trace en base (flux Epic 2).
 
@@ -155,18 +155,12 @@ def push_workouts(
     En cas d'échec d'un workout, on continue au suivant (l'erreur est collectée).
     En fin d'opération, une entrée est ajoutée à l'historique des syncs.
 
-    Lève (et ne capte pas) les erreurs de la phase de résolution des noms
-    (`get_workouts`) : c'est un pré-requis, pas un échec de transfert.
+    Les noms proviennent des `items` (le frontend les a via `fetch_workouts`) :
+    pas d'appel API redondant, pas de piège de pagination.
     """
-    total = len(ids)
+    total = len(items)
     if total == 0:
         return SyncResult(total=0, success=0, failed=0, errors=[])
-
-    # Résolution id → nom (le brief transmet des ids sans les noms).
-    name_by_id: dict[int, str] = {
-        int(workout.get("workoutId", 0)): str(workout.get("workoutName") or "")
-        for workout in client.get_workouts()
-    }
 
     existing = {p.name.lower() for p in watch.list_fit_files(_WORKOUTS_CATEGORY)}
 
@@ -174,11 +168,10 @@ def push_workouts(
     errors: list[str] = []
     pushed_files: list[str] = []
 
-    for workout_id in ids:
+    for item in items:
         try:
-            fit_bytes = client.download_workout(workout_id)
-            name = name_by_id.get(workout_id, "")
-            base = slugify(name) if name else f"workout_{workout_id}"
+            fit_bytes = client.download_workout(item.workout_id)
+            base = slugify(item.name) if item.name else f"workout_{item.workout_id}"
             slug = _unique_slug(base, existing)
             filename = f"{slug}.FIT"
             watch.write_fit(Path(_WORKOUTS_CATEGORY) / filename, fit_bytes)
@@ -187,13 +180,21 @@ def push_workouts(
             pushed_files.append(filename)
             success += 1
         except Exception as exc:  # noqa: BLE001 — on continue au suivant (brief)
-            errors.append(f"workout {workout_id}: {type(exc).__name__}: {exc}")
-            logger.log("sync.workouts", "error", f"Échec workout {workout_id}: {exc}")
+            errors.append(
+                f"workout {item.workout_id}: {type(exc).__name__}: {exc}"
+            )
+            logger.log(
+                "sync.workouts",
+                "error",
+                f"Échec workout {item.workout_id}: {exc}",
+            )
 
     failed = total - success
     status = "success" if failed == 0 else ("partial" if success > 0 else "failed")
     details = json.dumps({"files": pushed_files, "errors": errors})
-    history.log_sync("down", success, status, details)
+    # Les `errors` peuvent contenir un message d'exception brut : on applique le
+    # filtre anti-credentials avant persistance (cohérent avec operation_logs).
+    history.log_sync("down", success, status, OperationLogger.redact(details))
     logger.log(
         "sync.workouts",
         "ok" if failed == 0 else ("warning" if success > 0 else "error"),

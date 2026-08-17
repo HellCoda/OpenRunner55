@@ -48,14 +48,17 @@ class FakeClient:
 class FakeWatch:
     """Doublure de WatchFilesystem : list_fit_files et write_fit en mémoire."""
 
-    def __init__(self, existing: list[Path] | None = None):
+    def __init__(self, existing: list[Path] | None = None, write_error: Exception | None = None):
         self._existing = existing or []
+        self.write_error = write_error
         self.written: list[tuple[Path, bytes]] = []
 
     def list_fit_files(self, category: str) -> list[Path]:
         return self._existing
 
     def write_fit(self, path: Path, data: bytes) -> None:
+        if self.write_error is not None:
+            raise self.write_error
         self.written.append((path, data))
 
 
@@ -190,22 +193,23 @@ class TestFetchWorkouts:
 # --- push_workouts -----------------------------------------------------------
 
 
+def _summary(wid: int, name: str = "Foo") -> WorkoutSummary:
+    return WorkoutSummary(workout_id=wid, name=name, date=None, type="running")
+
+
 @pytest.mark.unit
 class TestPushWorkouts:
-    def _push(self, client, watch, transfers, history, logger, ids):
-        return push_workouts(client, watch, transfers, history, logger, ids)
+    def _push(self, client, watch, transfers, history, logger, items):
+        return push_workouts(client, watch, transfers, history, logger, items)
 
     def test_happy_path(self) -> None:
-        client = FakeClient(
-            [{"workoutId": 1, "workoutName": "Interval Run"}],
-            {1: b"FIT-bytes"},
-        )
+        client = FakeClient([], {1: b"FIT-bytes"})
         watch = FakeWatch()
         transfers = FakeTransfers()
         history = FakeHistory()
         logger = FakeLogger()
 
-        result = self._push(client, watch, transfers, history, logger, [1])
+        result = self._push(client, watch, transfers, history, logger, [_summary(1, "Interval Run")])
 
         assert result.total == 1
         assert result.success == 1
@@ -216,42 +220,36 @@ class TestPushWorkouts:
         assert history.logs[0][:3] == ("down", 1, "success")
 
     def test_collision_suffix(self) -> None:
-        client = FakeClient([{"workoutId": 1, "workoutName": "Foo"}], {1: b"x"})
+        client = FakeClient([], {1: b"x"})
         watch = FakeWatch(existing=[Path("Workouts/foo.FIT")])
-        transfers = FakeTransfers()
-        history = FakeHistory()
-        logger = FakeLogger()
-
-        self._push(client, watch, transfers, history, logger, [1])
-
+        self._push(client, watch, FakeTransfers(), FakeHistory(), FakeLogger(), [_summary(1, "Foo")])
         assert watch.written == [(Path("Workouts/foo_2.FIT"), b"x")]
+
+    def test_collision_suffix_increments(self) -> None:
+        # foo.FIT et foo_2.FIT existent déjà → foo_3.FIT
+        client = FakeClient([], {1: b"x"})
+        watch = FakeWatch(existing=[Path("Workouts/foo.FIT"), Path("Workouts/foo_2.FIT")])
+        self._push(client, watch, FakeTransfers(), FakeHistory(), FakeLogger(), [_summary(1, "Foo")])
+        assert watch.written == [(Path("Workouts/foo_3.FIT"), b"x")]
 
     def test_collision_suffix_is_case_insensitive(self) -> None:
         # FAT32 : "FOO.FIT" existant → "foo" est en collision.
-        client = FakeClient([{"workoutId": 1, "workoutName": "Foo"}], {1: b"x"})
+        client = FakeClient([], {1: b"x"})
         watch = FakeWatch(existing=[Path("Workouts/FOO.FIT")])
-        transfers = FakeTransfers()
-        history = FakeHistory()
-        logger = FakeLogger()
-
-        self._push(client, watch, transfers, history, logger, [1])
-
+        self._push(client, watch, FakeTransfers(), FakeHistory(), FakeLogger(), [_summary(1, "Foo")])
         assert watch.written == [(Path("Workouts/foo_2.FIT"), b"x")]
 
     def test_failure_continues_and_records(self) -> None:
-        client = FakeClient(
-            [
-                {"workoutId": 1, "workoutName": "Ok"},
-                {"workoutId": 2, "workoutName": "Ko"},
-            ],
-            {1: b"ok", 2: OSError("déconnexion USB")},
-        )
+        client = FakeClient([], {1: b"ok", 2: OSError("déconnexion USB")})
         watch = FakeWatch()
         transfers = FakeTransfers()
         history = FakeHistory()
         logger = FakeLogger()
 
-        result = self._push(client, watch, transfers, history, logger, [1, 2])
+        result = self._push(
+            client, watch, transfers, history, logger,
+            [_summary(1, "Ok"), _summary(2, "Ko")],
+        )
 
         assert result.total == 2
         assert result.success == 1
@@ -264,19 +262,30 @@ class TestPushWorkouts:
         # statut partiel
         assert history.logs[0][2] == "partial"
 
+    def test_write_fit_failure_records(self) -> None:
+        # Échec au niveau de l'écriture USB (pas du download).
+        client = FakeClient([], {1: b"ok"})
+        watch = FakeWatch(write_error=OSError("déconnexion USB"))
+        history = FakeHistory()
+
+        result = self._push(client, watch, FakeTransfers(), history, FakeLogger(), [_summary(1)])
+
+        assert result.failed == 1
+        assert result.success == 0
+        assert watch.written == []
+        assert "OSError" in result.errors[0]
+        assert history.logs[0][2] == "failed"
+
     def test_all_failed_status(self) -> None:
-        client = FakeClient(
-            [{"workoutId": 1, "workoutName": "A"}],
-            {1: OSError("x")},
-        )
+        client = FakeClient([], {1: OSError("x")})
         watch = FakeWatch()
         history = FakeHistory()
-        result = self._push(client, watch, FakeTransfers(), history, FakeLogger(), [1])
+        result = self._push(client, watch, FakeTransfers(), history, FakeLogger(), [_summary(1, "A")])
         assert result.failed == 1
         assert result.success == 0
         assert history.logs[0][2] == "failed"
 
-    def test_empty_ids_noop(self) -> None:
+    def test_empty_items_noop(self) -> None:
         client = FakeClient([], {})
         watch = FakeWatch()
         history = FakeHistory()
@@ -284,22 +293,31 @@ class TestPushWorkouts:
         assert result.total == 0
         assert result.success == 0
         assert history.logs == []  # aucune sync loggée
-        assert client.get_workouts_calls == 0
+        assert client.downloaded == []  # aucun download
 
     def test_duplicate_names_in_batch_get_suffix(self) -> None:
         # Deux workouts au même nom dans le même batch → pas d'écrasement.
-        client = FakeClient(
-            [{"workoutId": 1, "workoutName": "Same"}, {"workoutId": 2, "workoutName": "Same"}],
-            {1: b"one", 2: b"two"},
-        )
+        client = FakeClient([], {1: b"one", 2: b"two"})
         watch = FakeWatch()
         transfers = FakeTransfers()
-        self._push(client, watch, transfers, FakeHistory(), FakeLogger(), [1, 2])
+        self._push(client, watch, transfers, FakeHistory(), FakeLogger(), [_summary(1, "Same"), _summary(2, "Same")])
         names = [p.name for p, _ in watch.written]
         assert names == ["same.FIT", "same_2.FIT"]
 
     def test_missing_name_uses_workout_id(self) -> None:
-        client = FakeClient([{"workoutId": 7}], {7: b"x"})  # pas de workoutName
+        client = FakeClient([], {7: b"x"})
         watch = FakeWatch()
-        self._push(client, watch, FakeTransfers(), FakeHistory(), FakeLogger(), [7])
+        self._push(client, watch, FakeTransfers(), FakeHistory(), FakeLogger(), [_summary(7, "")])
         assert [p.name for p, _ in watch.written] == ["workout_7.FIT"]
+
+    def test_details_are_redacted(self) -> None:
+        # Retour 2 : un message d'erreur portant un email/token est masqué dans
+        # sync_history.details (cohérent avec operation_logs).
+        client = FakeClient([], {1: OSError("user@example.com password=secret")})
+        watch = FakeWatch()
+        history = FakeHistory()
+        self._push(client, watch, FakeTransfers(), history, FakeLogger(), [_summary(1)])
+        details = history.logs[0][3]
+        assert "user@example.com" not in details
+        assert "secret" not in details
+        assert "[REDACTED]" in details
