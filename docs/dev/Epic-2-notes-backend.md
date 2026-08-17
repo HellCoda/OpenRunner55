@@ -61,7 +61,7 @@
 
 ---
 
-## Points à trancher / vérifier pour les étapes suivantes
+## Points tranchés au fil des étapes (tous résolus)
 
 - **[Étape 4] `download_workout`** : le brief impose `return self._call("download_workout", workout_id)`.
   Vérifier la signature réelle de `garminconnect.Garmin.download_workout` (le
@@ -159,6 +159,59 @@ l'étape 5, comme convenu.
 
 ---
 
+## Étape 5 — `sync/workouts.py` (livré, commit `1987966`)
+
+**Livrables** : `sync/__init__.py`, `sync/workouts.py`, `tests/unit/test_sync_workouts.py`
+(23 tests). Régression : 148 tests verts. Couverture nouveaux modules : **95 %**
+(transfers/history/filesystem 100 %, workouts 98 %, detector 86 % — les branches
+non couvertes du detector sont celles du monitor pyudev, intouchables sans udev).
+
+### Vérification (champ date) — résolue
+
+Confirmé dans `spike-S2/python-garminconnect` :
+- `get_workouts()` retourne des dicts `{workoutId, workoutName, sportType{...},
+  updatedDate, createdDate}`. Dates au format `"2018-07-05T17:34:04.0"`
+  (parsable par `datetime.fromisoformat`).
+- `sportType.sportTypeKey` = sport lisible (ex. `"running"`).
+
+**Décision** : tri sur `updatedDate` en priorité (reflète la dernière
+modification), repli sur `createdDate` ; si les deux sont absentes/non
+parsables → `date = None` et l'élément est placé en fin de liste en conservant
+l'ordre API (tri stable, clé `datetime.min`).
+
+### Choix / décisions
+
+1. **`WorkoutSummary.date` typé `datetime | None`** (le brief dit `datetime`,
+   mais « si la date est absente » implique None). Écart mineur documenté.
+2. **Résolution id → nom dans `push_workouts`** : le brief transmet `ids` sans
+   les noms mais exige `slugify(workout_name)`. → `push_workouts` appelle
+   `client.get_workouts()` en interne pour construire `id → workoutName`.
+   **Conséquence assumée** : un appel API supplémentaire (délai 3 s + risque
+   429/401). Repli `workout_{id}` si l'id n'est pas trouvé. Si `get_workouts()`
+   échoue, `push_workouts` lève (pré-requis, pas un échec de transfert).
+3. **Collision insensible à la casse** (FAT32) : comparaison sur `name.lower()`.
+   Mise à jour de l'ensemble `existing` après chaque écriture pour gérer deux
+   workouts au même nom dans le même batch.
+4. **Statut dérivé** : `success` si 0 échec, `partial` si mixte, `failed` si
+   tout échoue. `ids` vide → retour immédiat `SyncResult(0,0,0,[])`, pas de
+   log d'historique.
+5. **`slugify`** : NFKD + suppression diacritiques (ascii), minuscules,
+   espaces→`_` (repliés), suppression non-alnum sauf `_`, **suppression des `_`
+   de début/fin** (ajout mineur, évite `_` ou `_.FIT`), tronqué à 40, repli
+   `"workout"` si vide.
+6. **`logger`** utilisé pour tracer les échecs par workout + un bilan final ;
+   `history` pour l'entrée `sync_history` (JSON `{files, errors}`).
+
+### Écarts ADR/brief
+
+| Référence | Écart | Justification |
+|-----------|-------|---------------|
+| Brief `WorkoutSummary.date: datetime` | `datetime | None` | « Si la date est absente » → None nécessaire |
+| Brief « slugify(workout_name) » sans source du nom | résolution via `get_workouts()` interne | signature `ids: list[int]` ne porte pas les noms |
+| Brief « suppression des non-alnum (sauf `_`) » | ajout du strip des `_` de début/fin | évite un fichier `_.FIT` sur nom tout-espaces |
+
+---
+
 ## Journal des étapes
 
 | Étape | Commit | Tests | État |
@@ -167,3 +220,4 @@ l'étape 5, comme convenu.
 | 2 — fichiers FIT | `cba31ae` | 99 verts | ✅ validé |
 | 3 — store (transfers + history) | `30db015` | 120 verts | ✅ validé |
 | 4 — download_workout | `278306a` | 125 verts | ✅ validé |
+| 5 — sync/workouts | `1987966` | 148 verts | ✅ livré |
