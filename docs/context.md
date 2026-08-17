@@ -1,7 +1,7 @@
 # Contexte — OpenRunner55
 
-- **Dernière mise à jour** : 2026-08-09
-- **Phase** : 3 Conception (gate validée) → prête pour Phase 4 Développement
+- **Dernière mise à jour** : 2026-08-17
+- **Phase** : 4 Développement — Epic 1 (Authentification) livré et mergé, 72 tests unitaires passent
 
 ## Vision
 
@@ -52,7 +52,7 @@ src/openrunner55/
 
 ## Prochaine action
 
-Démarrer la **Phase 4 — Développement**, Epic 1 (Authentification) en premier.
+**Epic 2 — Workouts Cloud → Montre** (US-2.1, US-2.3) : lister les workouts Garmin Connect triés récent→ancien, sélectionner et les pousser sur le FR55 via USB. Brief de mission à produire avant de lancer le dev.
 
 ## Navigation par phase
 

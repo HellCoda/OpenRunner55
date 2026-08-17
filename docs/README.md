@@ -29,5 +29,4 @@ docs/
 
 ## État courant
 
-- **Phase** : 3 Conception — gate validée, prête pour Phase 4 Développement.
-- Voir [`context.md`](context.md) pour le détail.
+L'état du projet (phase, avancement, prochaine action) vit dans [`context.md`](context.md) — source unique. Ce fichier ne porte que la navigation.

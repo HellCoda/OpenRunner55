@@ -4,7 +4,8 @@ Application desktop Linux (Fedora / GNOME) pour synchroniser bidirectionnellemen
 
 ## État du projet
 
-- **Phase** : 3 Conception — gate validée, prête pour Phase 4 Développement.
+L'avancement courant (phase, epic en cours, prochaine action) est dans [`docs/context.md`](docs/context.md) — source unique, mise à jour à chaque jalon.
+
 - **MVP** : 10 user stories, ~7 jours/homme. Détail dans [`docs/cadrage/mvp.md`](docs/cadrage/mvp.md).
 
 ## Documentation
