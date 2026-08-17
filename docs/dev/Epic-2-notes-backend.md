@@ -138,6 +138,27 @@ Régression : 99 tests verts.
 
 ---
 
+## Étape 4 — extension `garmin/client.py` (livré, commit `278306a`)
+
+**Livrables** : `garmin/client.py` (méthode `download_workout`), extension
+`tests/unit/test_garmin_client.py` (+5 tests). Régression : 125 tests verts.
+
+### Choix
+
+- **`download_workout(workout_id) -> bytes`** via `return self._call("download_workout", workout_id)`,
+  exactement comme le brief l'impose. Aucune logique ajoutée : délai 3 s, retry
+  429 et re-login 401 sont hérités de `_call()`/`_invoke()`.
+- Docstring du module mise à jour (les méthodes Epic 2 sont désormais exposées).
+- Tests ajoutés : retour bytes, forwarding de l'ID, héritage du délai 3 s,
+  retry 429, re-login 401 (le 401 confirme le passage par `_call`).
+
+### Point levé en note → résolu
+
+Le champ date pour `fetch_workouts` (étape 5) sera vérifié dans `spike-S2` à
+l'étape 5, comme convenu.
+
+---
+
 ## Journal des étapes
 
 | Étape | Commit | Tests | État |
@@ -145,3 +166,4 @@ Régression : 99 tests verts.
 | 1 — détection USB | `88e9d20` | 87 verts | ✅ validé |
 | 2 — fichiers FIT | `cba31ae` | 99 verts | ✅ validé |
 | 3 — store (transfers + history) | `30db015` | 120 verts | ✅ validé |
+| 4 — download_workout | `278306a` | 125 verts | ✅ validé |
