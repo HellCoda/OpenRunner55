@@ -32,7 +32,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, GLib, Gtk
+from gi.repository import Adw, Gdk, GLib, Gtk
 
 from openrunner55 import __version__
 from openrunner55.auth.authenticator import Authenticator
@@ -52,6 +52,15 @@ _LOGGER = logging.getLogger(__name__)
 # Noms des sections (ordre identique à celui des lignes de la navigation).
 _SECTION_NAMES = ("activity", "logs", "account")
 
+# CSS applicatif : arrondit le coin haut-droit de la barre latérale (classe
+# interne `sidebar-pane` de `Adw.NavigationSplitView`) pour l'aligner sur le
+# panneau de contenu arrondi. Le thème libadwaita ne le fait pas par défaut.
+_CUSTOM_CSS = """
+.sidebar-pane {
+  border-top-right-radius: 12px;
+}
+"""
+
 
 class OpenRunnerApp(Adw.Application):
     """Application GTK principale."""
@@ -63,8 +72,20 @@ class OpenRunnerApp(Adw.Application):
         self._authenticator = Authenticator()
         self._detector: WatchDetector | None = None
 
+    @staticmethod
+    def _load_custom_css() -> None:
+        """Charge le CSS applicatif (arrondi du coin haut-droit de la sidebar)."""
+        provider = Gtk.CssProvider()
+        provider.load_from_string(_CUSTOM_CSS)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
     def on_activate(self, app: Adw.Application) -> None:
         """Prépare la fenêtre puis lance la reprise de session en arrière-plan."""
+        self._load_custom_css()
         self._window = Adw.ApplicationWindow(application=app)
         self._window.set_title("OpenRunner55")
         self._window.set_default_size(900, 600)

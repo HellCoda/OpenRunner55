@@ -2,20 +2,18 @@
 
 Conforme `docs/conception/ux-design.md` §4.1 : split horizontal 40/60 entre la
 zone Garmin Connect (gauche, fonctionnelle) et la zone Montre (droite,
-placeholder). La vue délègue toute la logique de présentation au
-`WorkoutsController` — les widgets GTK restent minces (ADR-002, ADR-008).
+placeholder). Les deux zones sont regroupées dans **un seul panneau unifié**
+(classe `.card`) avec un séparateur vertical fin au milieu — pas de deux cartes
+flottantes séparées par une poignée de `Gtk.Paned`.
+
+La vue délègue toute la logique de présentation au `WorkoutsController` — les
+widgets GTK restent minces (ADR-002, ADR-008).
 
 Threading (brief Epic 2, option A) : la vue ne lance aucun thread elle-même.
 Elle appelle `fetch_workouts_async` / `push_workouts_async` du controller, qui
 lancent les threads et marshallent les callbacks vers le thread GTK via le
 scheduler (`GLib.idle_add`) injecté dans le controller. Les handlers de la vue
 s'exécutent donc toujours sur le thread GTK.
-
-La vue se rafraîchit via les callbacks enregistrés du controller
-(`on_workouts_changed`, `on_selection_changed`, `on_sending_state_changed`) et
-relit l'état exposé (propriétés). Les callbacks par-appel (`on_done`,
-`on_error`, `on_progress`) servent uniquement à afficher les erreurs (non
-conservées dans l'état du controller).
 """
 
 from __future__ import annotations
@@ -38,7 +36,7 @@ class WatchView(Gtk.Box):
         self._controller = controller
         self._check_by_id: dict[int, Gtk.CheckButton] = {}
         self._syncing = False
-        self.set_margin_top(18)
+        # Marge haute nulle : le panneau s'aligne sur le haut de la barre latérale.
         self.set_margin_bottom(18)
         self.set_margin_start(18)
         self.set_margin_end(18)
@@ -50,41 +48,49 @@ class WatchView(Gtk.Box):
     # -- construction --------------------------------------------------------
 
     def _build_ui(self) -> None:
-        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
-        paned.set_wide_handle(True)
-        paned.set_start_child(self._build_gc_card())
-        paned.set_end_child(self._build_watch_card())
-        paned.set_resize_start_child(False)
-        paned.set_resize_end_child(True)
-        paned.set_position(360)  # ≈ 40 % d'une fenêtre de 900 px
-        paned.set_hexpand(True)
-        paned.set_vexpand(True)
-        self.append(paned)
-
-    def _build_gc_card(self) -> Gtk.Widget:
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         card.add_css_class("card")
-        card.set_margin_top(12)
-        card.set_margin_bottom(12)
-        card.set_margin_start(12)
-        card.set_margin_end(12)
+        card.set_hexpand(True)
+        card.set_vexpand(True)
+        card.append(self._build_gc_section())
+        card.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
+        card.append(self._build_watch_section())
+        self.append(card)
 
-        title = Gtk.Label(label="Garmin Connect")
-        title.add_css_class("title-2")
-        title.set_halign(Gtk.Align.START)
-        card.append(title)
+    @staticmethod
+    def _build_header(title: str, subtitle: str) -> tuple[Gtk.Widget, Gtk.Label]:
+        """Construit un en-tête de section cohérent (titre + sous-titre grisé).
 
-        self._subtitle = Gtk.Label(label="Workouts (0)")
-        self._subtitle.add_css_class("dim-label")
-        self._subtitle.set_halign(Gtk.Align.START)
-        card.append(self._subtitle)
+        :returns: (widget en-tête, label du sous-titre pour mise à jour éventuelle)
+        """
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        title_label = Gtk.Label(label=title)
+        title_label.add_css_class("title-2")
+        title_label.set_halign(Gtk.Align.START)
+        subtitle_label = Gtk.Label(label=subtitle)
+        subtitle_label.add_css_class("dim-label")
+        subtitle_label.set_halign(Gtk.Align.START)
+        box.append(title_label)
+        box.append(subtitle_label)
+        return box, subtitle_label
+
+    def _build_gc_section(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_size_request(360, -1)  # ≈ 40 % d'une fenêtre de 900 px
+        box.set_margin_top(12)
+        box.set_margin_bottom(12)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
+
+        header, self._subtitle = self._build_header("Garmin Connect", "Workouts (0)")
+        box.append(header)
 
         # Spinner (centré) pendant le chargement.
         self._spinner = Gtk.Spinner()
         self._spinner.set_halign(Gtk.Align.CENTER)
         self._spinner.set_valign(Gtk.Align.CENTER)
         self._spinner.set_vexpand(True)
-        card.append(self._spinner)
+        box.append(self._spinner)
 
         # Liste des workouts (checkbox + nom).
         self._list_box = Gtk.ListBox()
@@ -93,21 +99,21 @@ class WatchView(Gtk.Box):
         self._list_scroll.set_vexpand(True)
         self._list_scroll.set_child(self._list_box)
         self._list_scroll.set_visible(False)
-        card.append(self._list_scroll)
+        box.append(self._list_scroll)
 
         # Message d'erreur de chargement (caché par défaut).
         self._error_label = Gtk.Label()
         self._error_label.add_css_class("error")
         self._error_label.set_wrap(True)
         self._error_label.set_visible(False)
-        card.append(self._error_label)
+        box.append(self._error_label)
 
         # Bouton d'envoi.
         self._send_button = Gtk.Button(label="Envoyer (0)")
         self._send_button.add_css_class("suggested-action")
         self._send_button.set_sensitive(False)
         self._send_button.connect("clicked", self._on_send_clicked)
-        card.append(self._send_button)
+        box.append(self._send_button)
 
         # Barre de progression (révélée pendant l'envoi).
         self._progress_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
@@ -118,38 +124,36 @@ class WatchView(Gtk.Box):
         self._progress_bar.set_show_text(True)
         self._progress_box.append(self._progress_label)
         self._progress_box.append(self._progress_bar)
-        card.append(self._progress_box)
+        box.append(self._progress_box)
 
         # Résumé de l'envoi (révélé après coup).
         self._summary_label = Gtk.Label()
         self._summary_label.set_wrap(True)
         self._summary_label.set_visible(False)
-        card.append(self._summary_label)
+        box.append(self._summary_label)
 
-        return card
+        return box
 
-    def _build_watch_card(self) -> Gtk.Widget:
-        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        card.add_css_class("card")
-        card.set_margin_top(12)
-        card.set_margin_bottom(12)
-        card.set_margin_start(12)
-        card.set_margin_end(12)
+    def _build_watch_section(self) -> Gtk.Widget:
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        box.set_hexpand(True)
+        box.set_margin_top(12)
+        box.set_margin_bottom(12)
+        box.set_margin_start(12)
+        box.set_margin_end(12)
 
-        title = Gtk.Label(label="Montre — FR55")
-        title.add_css_class("title-2")
-        title.set_halign(Gtk.Align.START)
-        card.append(title)
+        header, _ = self._build_header("Montre - FR55", "Activités")
+        box.append(header)
 
         self._watch_placeholder = Gtk.Label()
         self._watch_placeholder.add_css_class("dim-label")
         self._watch_placeholder.set_halign(Gtk.Align.CENTER)
         self._watch_placeholder.set_valign(Gtk.Align.CENTER)
         self._watch_placeholder.set_vexpand(True)
-        card.append(self._watch_placeholder)
+        box.append(self._watch_placeholder)
 
         self._update_watch_placeholder()
-        return card
+        return box
 
     # -- connexion au controller --------------------------------------------
 
