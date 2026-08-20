@@ -27,7 +27,6 @@
 
 1. **Aucun import Core à l'exécution.** Le controller n'importe que
    `sync/workouts.py` (Service). Les types Core (`GarminClient`,
-   `WatchFilesystem`, stores…) ne sont référencés que sous `TYPE_CHECKING`
    (annotations) : les objets sont injectés (duck-typing) et passés tels quels
    à `fetch_workouts`/`push_workouts`. Satisfait « l'UI n'importe pas le Core »
    au niveau du controller.
@@ -198,6 +197,39 @@ utilisent la palette Adwaita sombre).
 > Note : le Developer Frontend ne peut pas visualiser les captures d'écran
 > (modèle sans entrée image). Les corrections sont faites d'après la description
 > écrite de Franck, et la validation visuelle finale lui revient.
+
+---
+
+## Itération UI 2 (barre bleue + accent Garmin, commit `1185015`)
+
+Franck a demandé : une barre bleue Garmin (`#1976d2`) pleine largeur, sous la
+HeaderBar, intégrant l'indicateur de montre (et réservant la place à droite pour
+le bouton « Synchroniser » de l'Epic 3). Le bouton « Envoyer » et le fond des
+checkboxes cochées doivent être de la même couleur.
+
+Implémentation :
+
+1. **Barre bleue** : `Gtk.Box` (classe `.garmin-bar`) inséré entre la HeaderBar
+   et la `NavigationSplitView`, dans le contenu du `Adw.ToolbarView`. L'indicateur
+   de montre y a migré (texte blanc sur bleu : pleine opacité connecté,
+   `dim-label` déconnecté). Un espaceur `hexpand` réserve la droite.
+2. **Accent `#1976d2`** : tentative d'override de la variable `--accent-bg-color`
+   via `:root` → **échec** (l'accent est piloté par `Adw.StyleManager` via le
+   réglage système `accent-color` — ici `purple`). Solution retenue : règles CSS
+   **directes** sur les widgets concernés :
+   ```css
+   button.suggested-action { background-color: #1976d2; color: #fff; }
+   check:checked, check:indeterminate { background-color: #1976d2; color: #fff; }
+   ```
+   Les états hover/active du bouton (overlay `background-image` du thème)
+   restent fonctionnels par-dessus la couleur de base.
+3. **Vérification empirique** : rendu GTK en PNG + échantillonnage de pixels
+   (`Gtk.Snapshot` + `Gsk.CairoRenderer`). La barre bleue et le fond de checkbox
+   cochée ressortent exactement en `srgba(25,118,210,1)` = `#1976d2`.
+
+Observation : session en thème sombre, accent système **violet** (`accent-color`
+= purple). Le choix `#1976d2` est donc bien un override app-local, pas un simple
+repli sur l'accent système.
 
 ---
 
