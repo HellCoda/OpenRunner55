@@ -68,7 +68,12 @@ class Database:
         """Ouvre (et crée si besoin) la base, applique le schéma, retourne la connexion."""
         if self.path != Path(":memory:"):
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(self.path))
+        # check_same_thread=False : la connexion est ouverte sur le thread GTK
+        # (ui/app.py) mais les écritures de push_workouts surviennent dans un
+        # thread worker (WorkoutsController._push_worker). Le défaut True y lève
+        # sqlite3.ProgrammingError et laisse la base vide (bug E3). Sûr car un
+        # seul écrivain à la fois + verrou interne SQLite. Voir ADR-005 (révisé).
+        self._conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA foreign_keys = ON")
         self._init_schema()
