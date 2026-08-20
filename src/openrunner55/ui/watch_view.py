@@ -48,14 +48,19 @@ class WatchView(Gtk.Box):
     # -- construction --------------------------------------------------------
 
     def _build_ui(self) -> None:
-        card = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
-        card.add_css_class("card")
-        card.set_hexpand(True)
-        card.set_vexpand(True)
-        card.append(self._build_gc_section())
-        card.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL))
-        card.append(self._build_watch_section())
-        self.append(card)
+        # Panneau unifié `.card` avec une poignée de redimensionnement fine
+        # (curseur) entre les deux zones, au lieu d'un séparateur figé.
+        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL)
+        paned.add_css_class("card")
+        paned.set_hexpand(True)
+        paned.set_vexpand(True)
+        paned.set_wide_handle(False)  # poignée fine, pas de bande épaisse
+        paned.set_position(360)  # position initiale ≈ 40 % d'une fenêtre de 900 px
+        paned.set_resize_start_child(False)
+        paned.set_resize_end_child(True)
+        paned.set_start_child(self._build_gc_section())
+        paned.set_end_child(self._build_watch_section())
+        self.append(paned)
 
     @staticmethod
     def _build_header(title: str, subtitle: str) -> tuple[Gtk.Widget, Gtk.Label]:
@@ -76,7 +81,7 @@ class WatchView(Gtk.Box):
 
     def _build_gc_section(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
-        box.set_size_request(360, -1)  # ≈ 40 % d'une fenêtre de 900 px
+        box.set_size_request(280, -1)  # largeur minimale (le Paned gère le reste)
         box.set_margin_top(12)
         box.set_margin_bottom(12)
         box.set_margin_start(12)
