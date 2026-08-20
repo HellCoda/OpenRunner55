@@ -27,9 +27,11 @@
 
 1. **Aucun import Core à l'exécution.** Le controller n'importe que
    `sync/workouts.py` (Service). Les types Core (`GarminClient`,
-   (annotations) : les objets sont injectés (duck-typing) et passés tels quels
-   à `fetch_workouts`/`push_workouts`. Satisfait « l'UI n'importe pas le Core »
-   au niveau du controller.
+   `WatchFilesystem`, `TransferredFilesStore`, `SyncHistoryStore`,
+   `OperationLogger`, `WatchDetector`) ne sont référencés que sous
+   `TYPE_CHECKING` (annotations) : les objets sont injectés (duck-typing) et
+   passés tels quels à `fetch_workouts`/`push_workouts`. Satisfait « l'UI
+   n'importe pas le Core » au niveau du controller.
 
 2. **Scheduler injectable.** `__init__(..., scheduler=None)` avec défaut
    `_direct_scheduler` (invocation synchrone, pour les tests). En production la
@@ -163,10 +165,10 @@ Régression : 178 tests verts.
    `sync_history` « 1/1 » au lieu d'une entrée « X/Y ». À trancher (affecte
    l'UX §4.2 de l'Epic 4).
 
-4. **Ratio du split 40/60.** Après la refonte UI (section suivante), le split
-   est fait par une zone gauche à largeur fixe (`size_request(360)`) + séparateur
-   fin, la zone droite absorbant le reste. Ratio approximatif (~40/60 à 900 px),
-   pas strict. Accepté par Franck.
+4. **Ratio du split 40/60.** Au final, le split est un `Gtk.Paned` (poignée
+   fine, classe `.card`) : position initiale 360 px, largeur minimale gauche
+   280 px, la zone droite absorbant le reste. Ratio approximatif (~40/60 à
+   900 px), pas strict. Accepté par Franck.
 
 ---
 
@@ -211,8 +213,8 @@ Implémentation :
 
 1. **Barre bleue** : `Gtk.Box` (classe `.garmin-bar`) inséré entre la HeaderBar
    et la `NavigationSplitView`, dans le contenu du `Adw.ToolbarView`. L'indicateur
-   de montre y a migré (texte blanc sur bleu : pleine opacité connecté,
-   `dim-label` déconnecté). Un espaceur `hexpand` réserve la droite.
+   de montre y a migré (voyant vert `success` connecté, `dim-label` déconnecté,
+   texte blanc). Un espaceur `hexpand` réserve la droite.
 2. **Accent `#1976d2`** : tentative d'override de la variable `--accent-bg-color`
    via `:root` → **échec** (l'accent est piloté par `Adw.StyleManager` via le
    réglage système `accent-color` — ici `purple`). Solution retenue : règles CSS
@@ -233,6 +235,24 @@ repli sur l'accent système.
 
 ---
 
+## Itération UI 3 — finitions (commits `9ddc35f`, `263a7cb`, `5608cca`)
+
+Derniers ajustements demandés par Franck, après validation du fonctionnement :
+
+1. **Curseur de redimensionnement restauré** (`9ddc35f`) : le séparateur figé
+   (`Gtk.Separator`) est remplacé par un `Gtk.Paned` portant la classe `.card`
+   (panneau toujours unifié) avec `set_wide_handle(False)` — poignée fine,
+   redimensionnable, plus de bande épaisse.
+2. **Extension pleine fenêtre** (`263a7cb`) : après l'ajout de la barre bleue,
+   la `NavigationSplitView` et le panneau Activité s'étaient repliés sur leur
+   taille naturelle (un quart de la fenêtre, sans descendre en bas). Correctif :
+   `set_hexpand(True)`/`set_vexpand(True)` sur le conteneur vertical et sur la
+   `NavigationSplitView`.
+3. **Voyant vert** (`5608cca`) : l'indicateur de la barre bleue repasse au vert
+   (`success`) quand la montre est connectée — rétabli après un passage au blanc.
+
+---
+
 ## Journal des étapes
 
 | Étape | Livrable | Commit | Tests cumulés |
@@ -240,12 +260,17 @@ repli sur l'accent système.
 | 1 — controller | `workouts_controller.py` + tests | `102289e` | 173 |
 | 2 — vue | `watch_view.py` + test | `6be028f` | 178 |
 | 3 — shell | `app.py` | `0035df4` | 178 |
+| 4 — itération UI | panneau unifié + coin arrondi sidebar | `b1eccf1` | 178 |
+| 5 — itération UI 2 | barre bleue + accent Garmin | `1185015` | 178 |
+| 6 — finitions | curseur Paned, extension fenêtre, voyant vert | `9ddc35f`, `263a7cb`, `5608cca` | 178 |
 
 **Régression finale** : `pytest tests/ -m unit` → **178 passed** (151 existants
-+ 27 nouveaux). Imports `ui.app`, `ui.watch_view`, `ui.workouts_controller` OK.
-Smoke test GTK (display réel) : construction du shell + navigation + fetch
-async + cycle de vie `WatchDetector` → OK. Aucun `garminconnect` importé par
-l'UI. Aucun credential dans les logs/UI (rien de nouveau à ce niveau).
++ 27 nouveaux : 22 controller + 5 watch_view). Imports `ui.app`, `ui.watch_view`,
+`ui.workouts_controller` OK. Smoke test GTK (display réel) : construction du
+shell + navigation + fetch async + cycle de vie `WatchDetector` → OK. Aucun
+`garminconnect` importé par l'UI (vérifié par grep). Aucun TODO/FIXME non
+résolu. Aucun credential/token dans les logs ou l'UI (le champ mot de passe
+d'`auth_view` est l'écran de login Epic 1, hors périmètre de cet epic).
 
 ---
 
