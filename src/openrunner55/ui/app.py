@@ -277,14 +277,15 @@ class OpenRunnerApp(Adw.Application):
     def _on_watch_status_changed(self, connected: bool) -> None:
         """Met à jour l'indicateur de la barre bleue (thread-safe).
 
-        Texte blanc sur fond bleu : pleine opacité quand connecté, atténué
-        (`dim-label`) quand déconnecté.
+        Voyant vert quand connecté, atténué (`dim-label`) quand déconnecté.
         """
         if connected:
             self._watch_dot.remove_css_class("dim-label")
+            self._watch_dot.add_css_class("success")
             self._watch_status_label.remove_css_class("dim-label")
             self._watch_status_label.set_text("Montre connectée")
         else:
+            self._watch_dot.remove_css_class("success")
             self._watch_dot.add_css_class("dim-label")
             self._watch_status_label.add_css_class("dim-label")
             self._watch_status_label.set_text("Montre déconnectée")
