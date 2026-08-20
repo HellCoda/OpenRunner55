@@ -52,12 +52,31 @@ _LOGGER = logging.getLogger(__name__)
 # Noms des sections (ordre identique à celui des lignes de la navigation).
 _SECTION_NAMES = ("activity", "logs", "account")
 
-# CSS applicatif : arrondit le coin haut-droit de la barre latérale (classe
-# interne `sidebar-pane` de `Adw.NavigationSplitView`) pour l'aligner sur le
-# panneau de contenu arrondi. Le thème libadwaita ne le fait pas par défaut.
+# CSS applicatif (bleu Garmin #1976d2) :
+# - bouton « Envoyer » (suggested-action) ;
+# - fond des checkboxes cochées ;
+# - arrondi du coin haut-droit de la barre latérale (`sidebar-pane`) ;
+# - barre bleue pleine largeur entre l'en-tête et la navigation.
+#
+# Note : le contournement par variable `--accent-bg-color` ne fonctionne pas
+# (l'accent est piloté par `Adw.StyleManager` via le réglage système
+# `accent-color`). On cible donc directement les widgets concernés.
 _CUSTOM_CSS = """
+button.suggested-action {
+  background-color: #1976d2;
+  color: #ffffff;
+}
+check:checked, check:indeterminate, radio:checked, radio:indeterminate {
+  background-color: #1976d2;
+  color: #ffffff;
+}
 .sidebar-pane {
   border-top-right-radius: 12px;
+}
+.garmin-bar {
+  background-color: #1976d2;
+  color: #ffffff;
+  padding: 8px 14px;
 }
 """
 
@@ -198,12 +217,17 @@ class OpenRunnerApp(Adw.Application):
         split.set_max_sidebar_width(260)
 
         header = Adw.HeaderBar()
-        header.pack_start(self._build_watch_indicator())
-        # Pas de bouton « ↻ Synchroniser » ici (réservé à l'Epic 3).
+
+        # Barre bleue pleine largeur (indicateur montre + emplacement réservé
+        # au bouton « ↻ Synchroniser » de l'Epic 3), entre l'en-tête et la
+        # navigation.
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        content.append(self._build_garmin_bar())
+        content.append(split)
 
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(header)
-        toolbar.set_content(split)
+        toolbar.set_content(content)
 
         self._window.set_content(toolbar)
 
@@ -221,25 +245,44 @@ class OpenRunnerApp(Adw.Application):
 
     # -- indicateur de connexion montre -------------------------------------
 
+    def _build_garmin_bar(self) -> Gtk.Widget:
+        """Barre bleue pleine largeur : indicateur montre + place à droite.
+
+        La place à droite est réservée au bouton « ↻ Synchroniser » (Epic 3) ;
+        pour l'instant un espaceur l'occupe.
+        """
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        bar.add_css_class("garmin-bar")
+        bar.set_hexpand(True)
+        bar.append(self._build_watch_indicator())
+        spacer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        spacer.set_hexpand(True)
+        bar.append(spacer)
+        return bar
+
     def _build_watch_indicator(self) -> Gtk.Widget:
         self._watch_dot = Gtk.Label(label="●")
         self._watch_dot.add_css_class("dim-label")
         self._watch_status_label = Gtk.Label(label="Montre déconnectée")
         self._watch_status_label.add_css_class("dim-label")
-        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         box.append(self._watch_dot)
         box.append(self._watch_status_label)
         return box
 
     def _on_watch_status_changed(self, connected: bool) -> None:
-        """Met à jour la puce de la HeaderBar (thread-safe, via WatchDetector)."""
+        """Met à jour l'indicateur de la barre bleue (thread-safe).
+
+        Texte blanc sur fond bleu : pleine opacité quand connecté, atténué
+        (`dim-label`) quand déconnecté.
+        """
         if connected:
             self._watch_dot.remove_css_class("dim-label")
-            self._watch_dot.add_css_class("success")
+            self._watch_status_label.remove_css_class("dim-label")
             self._watch_status_label.set_text("Montre connectée")
         else:
-            self._watch_dot.remove_css_class("success")
             self._watch_dot.add_css_class("dim-label")
+            self._watch_status_label.add_css_class("dim-label")
             self._watch_status_label.set_text("Montre déconnectée")
 
     # -- helpers de construction --------------------------------------------
