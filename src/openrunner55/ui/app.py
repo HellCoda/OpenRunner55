@@ -215,6 +215,8 @@ class OpenRunnerApp(Adw.Application):
         split.set_content(Adw.NavigationPage.new(self._content_stack, "Contenu"))
         split.set_min_sidebar_width(180)
         split.set_max_sidebar_width(260)
+        split.set_hexpand(True)
+        split.set_vexpand(True)
 
         header = Adw.HeaderBar()
 
@@ -222,6 +224,8 @@ class OpenRunnerApp(Adw.Application):
         # au bouton « ↻ Synchroniser » de l'Epic 3), entre l'en-tête et la
         # navigation.
         content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        content.set_hexpand(True)
+        content.set_vexpand(True)
         content.append(self._build_garmin_bar())
         content.append(split)
 
