@@ -1,7 +1,7 @@
 # Contexte — OpenRunner55
 
-- **Dernière mise à jour** : 2026-08-17
-- **Phase** : 4 Développement — Epic 1 (Authentification) livré et mergé, 72 tests unitaires passent
+- **Dernière mise à jour** : 2026-08-20
+- **Phase** : 4 Développement — Epic 2 (Workouts Cloud → Montre) frontend livré et mergé, 179 tests unitaires passent
 
 ## Vision
 
@@ -52,7 +52,7 @@ src/openrunner55/
 
 ## Prochaine action
 
-**Epic 2 — Workouts Cloud → Montre** (US-2.1, US-2.3) : lister les workouts Garmin Connect triés récent→ancien, sélectionner et les pousser sur le FR55 via USB. Brief de mission à produire avant de lancer le dev.
+**Epic 3 — Activités Montre → Cloud** : remontée des activités enregistrées sur la FR55 vers Garmin Connect. Backend (extension `sync/` + `garmin/client.py`) puis UI (vue « Fichiers de la montre » + bouton « Synchroniser vers GC »). Brief de mission à produire avant de lancer le dev.
 
 ## Navigation par phase
 

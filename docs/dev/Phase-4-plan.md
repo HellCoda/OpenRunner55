@@ -22,8 +22,8 @@
 |------|-----------|------|---------|-----------------|
 | 1 — Auth | Backend + UI login | ✅ Livré (session 1) | `feat/epic-1-auth` | `2a762a0` |
 | 2 — Workouts Cloud → Montre | Backend | ✅ Livré | `feat/epic-2-workouts` | `bd68650` |
-| 2 — Workouts Cloud → Montre | UI (liste, sélection, envoi) | 🔄 Prochain chantier | — | — |
-| 3 — Activités Montre → Cloud | Backend + UI | ⏳ En attente | — | — |
+| 2 — Workouts Cloud → Montre | UI (liste, sélection, envoi) | ✅ Livré | `feat/epic-2-frontend` | `221002b` |
+| 3 — Activités Montre → Cloud | Backend + UI | 🔄 Prochain chantier | — | — |
 | 4 — Historique & logs | UI transverse | ⏳ En attente | — | — |
 | 5 — Robustesse | Retry 429, déconnexion USB, etc. | ⏳ Post-MVP (Should) | — | — |
 
@@ -44,22 +44,20 @@
   relatifs à `GARMIN/`, `WatchDetector.start()/stop()`.
 - Merge : `bd68650` sur `main`
 
-### Étape 3 — Epic 2 frontend 🔄 (prochain)
+### Étape 3 — Epic 2 frontend ✅
 
-- Brief à rédiger : `docs/dev/Epic-2-brief-frontend.md`
-- Périmètre : `ui/app.py` (shell principal post-auth), `ui/watch_view.py`
-  (liste des workouts GC, sélection multiple, détection USB, envoi)
-- Dépendances : contrats backend Epic 2 (figés), `WatchDetector`,
-  `fetch_workouts`/`push_workouts`, `SyncHistoryStore` (lecture).
-- Points d'attention contrat :
-  - `WatchDetector.start()` à appeler post-auth, `stop()` à la fermeture
-  - `WorkoutSummary.date` peut être `None` (affichage à gérer)
-  - Limite 20 workouts dans `fetch_workouts` (pagination à prévoir si > 20)
-  - `push_workouts` ne skippe pas les déjà-transférés (la dédup locale
-    n'est pas consultée dans le flux push — US-2.2 est en Should)
-- Gate : tests UI (GTK mocké si possible) + revue DP + merge.
+- `ui/app.py` (shell post-auth, navigation 3 sections, barre bleue Garmin),
+  `ui/watch_view.py` (zone GC workouts + zone Montre placeholder),
+  `ui/workouts_controller.py` (logique de présentation sans GTK)
+- Fix backend livré au passage : `check_same_thread=False` dans
+  `store/database.py` (bug E3 — écritures SQLite cross-thread du worker
+  `push_workouts` levaient `ProgrammingError`, base restait vide). ADR-005
+  révisée. Test de non-régression `test_database_cross_thread.py`.
+- Validation runtime : envoi réel de workouts vers la FR55, base SQLite
+  peuplée (`transferred_files`, `sync_history`, `operation_logs`).
+- Merge : `221002b` (frontend) + `8957b98` (fix SQLite) sur `main`
 
-### Étape 4 — Epic 3 (Montre → Cloud)
+### Étape 4 — Epic 3 (Montre → Cloud) 🔄 (prochain)
 
 - Backend : extension `sync/` (service `sync/activities.py` ou similaire),
   lecture `WatchFilesystem.list_fit_files` sur `Activity/`/`Monitor/`/
@@ -103,7 +101,7 @@
 |-------|-------------|------|
 | E1 | Epic 1 livré (auth + UI login) | ✅ |
 | E2 | Epic 2 backend livré | ✅ |
-| E3 | Epic 2 frontend livré (MVP Cloud → Montre complet) | ⏳ |
+| E3 | Epic 2 frontend livré (MVP Cloud → Montre complet) | ✅ |
 | E4 | Epic 3 livré (MVP Montre → Cloud complet) | ⏳ |
 | E5 | Epic 4 livré (historique + logs) | ⏳ |
 | E6 | MVP validé (condition `docs/cadrage/mvp.md`) | ⏳ |
@@ -117,6 +115,9 @@
 - Garde `WatchFilesystem._resolve` sur chemin relatif.
 - Officialisation de l'écart ADR-006 (déclencheur sur label `GARMIN`).
 - Pagination `fetch_workouts` si > 20 workouts côté UI.
+- Granularité de l'historique : `push_workouts` appelé par workout par le
+  controller → N entrées `sync_history` « 1/1 » au lieu d'une agrégée « X/Y ».
+  À trancher pour l'Epic 4 (affecte l'affichage UX §4.2).
 
 ---
 

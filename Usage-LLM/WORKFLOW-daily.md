@@ -20,26 +20,26 @@
 ### Phase 1 — Découverte / Analyse besoin
 Agent : Analyst.
 
-- [ ] Cadrer le problème avant toute solution `→ alignement`
-- [ ] Grilling : laisser l'agent bombarder de questions (50-60 tours OK) `→ §2.1`
-- [ ] Produire le Project Brief (problem statement) `→ artefact`
-- [ ] **Gate** : go/no-go — le problème vaut-il d'être résolu, et par moi ? `→ sortie`
+- [x] Cadrer le problème avant toute solution `→ alignement`
+- [x] Grilling : laisser l'agent bombarder de questions (50-60 tours OK) `→ §2.1`
+- [x] Produire le Project Brief (problem statement) `→ artefact`
+- [x] **Gate** : go/no-go — le problème vaut-il d'être résolu, et par moi ? `→ sortie`
 
 ### Phase 2 — Planification
 Agent : PM.
 
-- [ ] Entrée : Project Brief validé `→ prérequis`
-- [ ] Rédiger le PRD, découper en epics, prioriser (MoSCoW) `→ périmètre`
-- [ ] Définir le MVP `→ focus`
-- [ ] **Gate** : PRD complet, epics couvrant le besoin, MVP identifié `→ sortie`
+- [x] Entrée : Project Brief validé `→ prérequis`
+- [x] Rédiger le PRD, découper en epics, prioriser (MoSCoW) `→ périmètre`
+- [x] Définir le MVP `→ focus`
+- [x] **Gate** : PRD complet, epics couvrant le besoin, MVP identifié `→ sortie`
 
 ### Phase 3 — Conception
 Agent : Architect + UX.
 
-- [ ] Entrée : PRD + epics `→ prérequis`
-- [ ] Choix stack/patterns, schéma d'archi, modèle de données, contrats d'API `→ structure`
-- [ ] Écrire les ADR — **rationale + alternatives écartées + constraints** obligatoires `→ §19`
-- [ ] **Gate** : archi cohérente avec le PRD, aucune zone d'ombre majeure `→ sortie`
+- [x] Entrée : PRD + epics `→ prérequis`
+- [x] Choix stack/patterns, schéma d'archi, modèle de données, contrats d'API `→ structure`
+- [x] Écrire les ADR — **rationale + alternatives écartées + constraints** obligatoires `→ §19`
+- [x] **Gate** : archi cohérente avec le PRD, aucune zone d'ombre majeure `→ sortie`
 
 ### Phase 4 — Développement
 Agent : Scrum Master (découpe) → Dev (exécution).
