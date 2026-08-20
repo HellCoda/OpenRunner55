@@ -164,9 +164,40 @@ Régression : 178 tests verts.
    `sync_history` « 1/1 » au lieu d'une entrée « X/Y ». À trancher (affecte
    l'UX §4.2 de l'Epic 4).
 
-4. **Ratio du split 40/60.** `Gtk.Paned` en pixels, pas en pourcentage. Si le
-   40/60 strict est requis, passer par `sidebar_width_fraction` (disponible en
-   libadwaita 1.9) ou accepter l'approximation.
+4. **Ratio du split 40/60.** Après la refonte UI (section suivante), le split
+   est fait par une zone gauche à largeur fixe (`size_request(360)`) + séparateur
+   fin, la zone droite absorbant le reste. Ratio approximatif (~40/60 à 900 px),
+   pas strict. Accepté par Franck.
+
+---
+
+## Itération UI (retour Franck, commit `b1eccf1`)
+
+Franck a validé le fonctionnement (app lancée, montre reconnue) mais relevé des
+défauts cosmétiques. Corrections apportées :
+
+1. **Panneau Activité unifié** : les deux cartes séparées (`Gtk.Paned` + poignée
+   large) sont remplacées par **un seul panneau `.card`** contenant les deux
+   zones + un `Gtk.Separator` vertical fin au milieu. Répond à « zone groupée
+   comme un tableau unifié avec le séparateur au milieu ».
+2. **Titres cohérents** : en-têtes identiques (titre `title-2` + sous-titre
+   `dim-label`). La zone Montre a un sous-titre « Activités » qui équilibre le
+   « Workouts (N) » de GC.
+3. **Alignement haut** : marge haute du panneau supprimée pour s'aligner sur la
+   barre latérale (fini le « panel gauche plus haut »).
+4. **Coin haut-droit arrondi de la sidebar** : CSS applicatif (`_CUSTOM_CSS` dans
+   `app.py`) qui applique `border-top-right-radius: 12px` à la classe interne
+   `sidebar-pane` de `Adw.NavigationSplitView`. Le thème libadwaita ne le fait
+   pas par défaut (coin carré). Rayon aligné sur celui de `.card` (12 px).
+   Chargé via `Gtk.StyleContext.add_provider_for_display` à `on_activate`.
+
+Observation : la session tourne en **thème sombre** (`color-scheme=prefer-dark`,
+gtk-theme `Sweet-Dark-v40` — ce dernier n'affecte pas les apps libadwaita, qui
+utilisent la palette Adwaita sombre).
+
+> Note : le Developer Frontend ne peut pas visualiser les captures d'écran
+> (modèle sans entrée image). Les corrections sont faites d'après la description
+> écrite de Franck, et la validation visuelle finale lui revient.
 
 ---
 
