@@ -1,7 +1,7 @@
 # Contexte — OpenRunner55
 
-- **Dernière mise à jour** : 2026-08-20
-- **Phase** : 4 Développement — Epic 2 (Workouts Cloud → Montre) frontend livré et mergé, 179 tests unitaires passent
+- **Dernière mise à jour** : 2026-08-21
+- **Phase** : 4 Développement — Epic 3 backend (Activités Montre → GC) livré et mergé, 205 tests unitaires passent
 
 ## Vision
 
@@ -52,7 +52,9 @@ src/openrunner55/
 
 ## Prochaine action
 
-**Epic 3 — Activités Montre → Cloud** : remontée des activités enregistrées sur la FR55 vers Garmin Connect. Backend (extension `sync/` + `garmin/client.py`) puis UI (vue « Fichiers de la montre » + bouton « Synchroniser vers GC »). Brief de mission à produire avant de lancer le dev.
+**Epic 3 — Activités Montre → Cloud (frontend)** : UI de la zone Montre (liste des fichiers `list_uploadable_files`, bouton « Synchroniser vers GC » appelant `push_activities` dans un thread worker). Les contrats backend sont figés et validés en réel (smoke montre FR55 + upload GC). Brief de mission frontend à produire.
+
+**Point de cadrage ouvert (frontend)** : gestion de la « première sync » — l'utilisateur a potentiellement 200+ fichiers sur la montre dont la plupart sont déjà sur GC (via Garmin Express). GC fait la déduplication côté serveur, mais l'UX doit guider l'utilisateur (sélection, pas d'upload massif aveugle).
 
 ## Navigation par phase
 
