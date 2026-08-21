@@ -17,9 +17,13 @@ mêmes objets sélectionnés (pas de re-listing).
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
+from openrunner55.garmin.client import GarminClient
+from openrunner55.store.history import SyncHistoryStore
+from openrunner55.store.logger import OperationLogger
 from openrunner55.store.transfers import TransferredFilesStore
 from openrunner55.watch.filesystem import WatchFilesystem
 
@@ -85,3 +89,69 @@ def list_uploadable_files(
                 )
             )
     return result
+
+
+def push_activities(
+    client: GarminClient,
+    watch: WatchFilesystem,
+    transfers: TransferredFilesStore,
+    history: SyncHistoryStore,
+    logger: OperationLogger,
+    items: list[UploadableFile],
+) -> SyncResult:
+    """Upload les fichiers sélectionnés vers Garmin Connect.
+
+    Par fichier : résout le chemin absolu (`watch.absolute_path`) →
+    `client.upload_activity(path)` → `transfers.mark_transferred(file_name,
+    "up", source)` en cas de succès. En cas d'échec d'un fichier, on continue au
+    suivant (l'erreur est collectée dans `SyncResult.errors`). En fin
+    d'opération, une entrée est ajoutée à l'historique des syncs.
+
+    Les fichiers `already_transferred=True` sont skipés (aucun appel API — le
+    compte `skipped` est reporté dans le `SyncResult`). Le succès est déterminé
+    par l'absence d'exception de `upload_activity` (les 4 catégories sont
+    validées par le spike S2 ; `detailedImportResult` n'est pas parsé au MVP).
+    """
+    total = len(items)
+    if total == 0:
+        return SyncResult(total=0, success=0, failed=0, errors=[], skipped=0)
+
+    success = 0
+    skipped = 0
+    errors: list[str] = []
+    uploaded_files: list[str] = []
+
+    for item in items:
+        if item.already_transferred:
+            skipped += 1
+            continue
+        try:
+            absolute = watch.absolute_path(item.path)
+            client.upload_activity(absolute)
+            transfers.mark_transferred(item.path.name, _DIRECTION, item.category)
+            uploaded_files.append(item.path.name)
+            success += 1
+        except Exception as exc:  # noqa: BLE001 — on continue au suivant (brief)
+            errors.append(f"file {item.path}: {type(exc).__name__}: {exc}")
+            logger.log(
+                "sync.activities",
+                "error",
+                f"Échec upload {item.path}: {exc}",
+            )
+
+    failed = total - success - skipped
+    status = "success" if failed == 0 else ("partial" if success > 0 else "failed")
+    details = json.dumps(
+        {"files": uploaded_files, "errors": errors, "skipped": skipped}
+    )
+    # Les `errors` peuvent contenir un message d'exception brut : on applique le
+    # filtre anti-credentials avant persistance (cohérent avec operation_logs).
+    history.log_sync(_DIRECTION, success, status, OperationLogger.redact(details))
+    logger.log(
+        "sync.activities",
+        "ok" if failed == 0 else ("warning" if success > 0 else "error"),
+        f"{success}/{total - skipped} fichiers uploadés vers GC ({skipped} skippés)",
+    )
+    return SyncResult(
+        total=total, success=success, failed=failed, errors=errors, skipped=skipped
+    )
