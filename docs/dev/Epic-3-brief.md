@@ -16,6 +16,7 @@ vers la montre) et la détection USB sont en place.
 L'Epic 3 ajoute le sens **Montre → Garmin Connect** : lecture des fichiers
 .FIT sur la montre, filtrage, téléversement via l'API GC, traçabilité en base.
 
+*Le brief note une zone à vérifier au début du dev : garminconnect.Garmin.upload_activity accepte-t-elle un chemin de fichier uniquement, ou aussi des bytes ? Si chemin uniquement, il faudra exposer un resolveur de chemin absolu sur WatchFilesystem (ou écrire en temporaire). Ce n'est pas bloquant — c'est une découverte de début de dev, le dev adaptera.*
 ## Périmètre (MVP)
 
 Stories concernées :

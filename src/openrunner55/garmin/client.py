@@ -15,14 +15,15 @@ Applique ADR-007 :
 Le retry 5xx / erreurs réseau est déjà géré en interne par la lib
 (`retry_attempts=3`, backoff avec jitter) — pas de double gestion.
 
-Méthodes exposées : `get_workouts`, `get_activities` (Epic 1) et
-`download_workout` (Epic 2). `upload_activity` sera ajoutée avec l'Epic 3.
+Méthodes exposées : `get_workouts`, `get_activities` (Epic 1),
+`download_workout` (Epic 2) et `upload_activity` (Epic 3).
 """
 
 from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 
 from garminconnect import (
     GarminConnectAuthenticationError,
@@ -126,3 +127,22 @@ class GarminClient:
         (`garmin.download_workout(workoutId)` retourne les bytes du FIT).
         """
         return self._call("download_workout", workout_id)
+
+    def upload_activity(self, file_path: str | Path) -> dict:
+        """Téléverse un fichier .FIT vers Garmin Connect — Epic 3.
+
+        Hérite du délai inter-requêtes, du retry 429 et du re-login 401 via
+        `_call()` (ADR-007). Référence : `spike-S2/bloc3_upload_activity.py`
+        (`garmin.upload_activity(path)` retourne un dict avec
+        `detailedImportResult`).
+
+        La lib n'accepte qu'un chemin `str` (pas de bytes, pas de `Path`) : le
+        wrapper coerce `file_path` en `str` avant l'appel.
+
+        :param file_path: chemin absolu du fichier .FIT à uploader.
+        :returns: réponse API GC (dict). Contient `detailedImportResult` avec
+            `successes` et `failures`.
+        :raises GarminConnectTooManyRequestsError: si 429 persistant après retries.
+        :raises GarminAuthError: si session expirée et reprise impossible.
+        """
+        return self._call("upload_activity", str(file_path))

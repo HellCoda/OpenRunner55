@@ -98,3 +98,27 @@ class TestReadFit:
     def test_missing_file_raises_oserror(self, fs) -> None:
         with pytest.raises(OSError):
             fs.read_fit(Path("Workouts/inexistant.FIT"))
+
+
+@pytest.mark.unit
+class TestFileSize:
+    def test_returns_size_in_bytes(self, fs) -> None:
+        _write(fs, "Activity/run.fit", b"\x0e" * 1234)
+        assert fs.file_size(Path("Activity/run.fit")) == 1234
+
+    def test_missing_file_raises_oserror(self, fs) -> None:
+        with pytest.raises(OSError):
+            fs.file_size(Path("Activity/inexistant.fit"))
+
+
+@pytest.mark.unit
+class TestAbsolutePath:
+    def test_resolves_relative_to_garmin_root(self, fs, tmp_path) -> None:
+        assert fs.absolute_path(Path("Activity/run.fit")) == (
+            tmp_path / "GARMIN" / "Activity" / "run.fit"
+        )
+
+    def test_resolved_path_is_writable(self, fs) -> None:
+        # Le chemin absolu retourné doit pointer sur le fichier réellement écrit.
+        _write(fs, "Activity/run.fit", b"data")
+        assert fs.absolute_path(Path("Activity/run.fit")).read_bytes() == b"data"

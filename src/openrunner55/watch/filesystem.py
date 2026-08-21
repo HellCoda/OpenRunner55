@@ -83,6 +83,24 @@ class WatchFilesystem:
         """Lit un fichier FIT (chemin relatif à GARMIN/). Lève `OSError` si absent."""
         return self._resolve(path).read_bytes()
 
+    def file_size(self, path: Path) -> int:
+        """Retourne la taille en octets d'un fichier FIT (chemin relatif à GARMIN/).
+
+        Utilise `stat()` (métadonnée) sans lire le contenu — adapté au listing
+        de dossiers volumineux (ex. `Activity/`). Lève `OSError`
+        (`FileNotFoundError`) si le fichier est absent.
+        """
+        return self._resolve(path).stat().st_size
+
+    def absolute_path(self, path: Path) -> Path:
+        """Résout un chemin relatif à GARMIN/ en chemin absolu sur le volume.
+
+        Expose publiquement la résolution `_resolve` pour les services qui
+        doivent passer un chemin absolu à une API externe qui ne lit que des
+        chemins de fichiers (ex. `GarminClient.upload_activity`).
+        """
+        return self._resolve(path)
+
     def write_fit(self, path: Path, data: bytes) -> None:
         """Écrit un fichier FIT (chemin relatif à GARMIN/), en créant le dossier parent.
 

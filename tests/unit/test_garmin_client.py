@@ -5,6 +5,8 @@ Voir docs/decisions/adr-007.md (délai 3s, backoff 429, cascade 401) et adr-008.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from openrunner55.auth.authenticator import SessionNotFoundError
@@ -26,10 +28,14 @@ class FakeGarmin:
         self.download_result: bytes = b""
         self.download_errors: list[Exception] = []
         self.downloaded_ids: list[int] = []
+        self.upload_result: dict = {}
+        self.upload_errors: list[Exception] = []
+        self.uploaded_paths: list[str] = []
         self.calls: dict[str, int] = {
             "get_workouts": 0,
             "get_activities": 0,
             "download_workout": 0,
+            "upload_activity": 0,
         }
 
     def get_workouts(self, start: int = 0, limit: int = 20) -> list[dict]:
@@ -50,6 +56,13 @@ class FakeGarmin:
         if self.download_errors:
             raise self.download_errors.pop(0)
         return self.download_result
+
+    def upload_activity(self, activity_path: str) -> dict:
+        self.calls["upload_activity"] += 1
+        self.uploaded_paths.append(activity_path)
+        if self.upload_errors:
+            raise self.upload_errors.pop(0)
+        return self.upload_result
 
 
 class FakeAuthenticator:
@@ -263,3 +276,55 @@ class TestDownloadWorkout:
         assert client.download_workout(7) == b"\x0e\x10\x0e\x00"
         assert fresh_garmin.calls["download_workout"] == 1
         assert fresh_garmin.downloaded_ids == [7]
+
+
+@pytest.mark.unit
+class TestUploadActivity:
+    def test_returns_dict(self) -> None:
+        fake_garmin = FakeGarmin()
+        fake_garmin.upload_result = {"detailedImportResult": {"successes": []}}
+        client = GarminClient(authenticator=FakeAuthenticator(), garmin=fake_garmin)
+        assert client.upload_activity("/tmp/a.fit") == {"detailedImportResult": {"successes": []}}
+
+    def test_forwards_path_as_string(self) -> None:
+        fake_garmin = FakeGarmin()
+        client = GarminClient(authenticator=FakeAuthenticator(), garmin=fake_garmin)
+        client.upload_activity("/run/media/user/GARMIN/GARMIN/Activity/run.fit")
+        assert fake_garmin.uploaded_paths == ["/run/media/user/GARMIN/GARMIN/Activity/run.fit"]
+
+    def test_coerces_path_object_to_string(self) -> None:
+        # La lib exige un `str` ; le wrapper doit accepter `Path` et le convertir.
+        fake_garmin = FakeGarmin()
+        client = GarminClient(authenticator=FakeAuthenticator(), garmin=fake_garmin)
+        client.upload_activity(Path("/run/media/user/GARMIN/GARMIN/Activity/run.fit"))
+        assert fake_garmin.uploaded_paths == ["/run/media/user/GARMIN/GARMIN/Activity/run.fit"]
+        assert all(isinstance(p, str) for p in fake_garmin.uploaded_paths)
+
+    def test_inherits_inter_request_delay(self, fake_sleep, fake_monotonic) -> None:
+        fake_monotonic["now"] = 0.0
+        client = GarminClient(authenticator=FakeAuthenticator(), garmin=FakeGarmin())
+        client.get_workouts()  # t=0
+        fake_monotonic["now"] = 1.0  # 1s plus tard : il reste 2s
+        client.upload_activity("/tmp/a.fit")
+        assert fake_sleep == [2.0]
+
+    def test_retries_on_429(self, fake_sleep) -> None:
+        fake_garmin = FakeGarmin()
+        fake_garmin.upload_errors = [GarminConnectTooManyRequestsError("429")]
+        fake_garmin.upload_result = {"detailedImportResult": {"successes": [1]}}
+        client = GarminClient(authenticator=FakeAuthenticator(), garmin=fake_garmin)
+        assert client.upload_activity("/tmp/a.fit") == {"detailedImportResult": {"successes": [1]}}
+        assert fake_garmin.calls["upload_activity"] == 2
+        assert fake_sleep == [1.0]  # backoff 1s au premier retry
+
+    def test_relogs_in_on_401(self, fake_sleep) -> None:
+        fake_garmin = FakeGarmin()
+        fake_garmin.upload_errors = [GarminConnectAuthenticationError("401")]
+        fake_auth = FakeAuthenticator()
+        fresh_garmin = FakeGarmin()
+        fresh_garmin.upload_result = {"detailedImportResult": {"successes": [1]}}
+        fake_auth.clients.append(fresh_garmin)
+        client = GarminClient(authenticator=fake_auth, garmin=fake_garmin)
+        assert client.upload_activity("/tmp/a.fit") == {"detailedImportResult": {"successes": [1]}}
+        assert fresh_garmin.calls["upload_activity"] == 1
+        assert fresh_garmin.uploaded_paths == ["/tmp/a.fit"]
