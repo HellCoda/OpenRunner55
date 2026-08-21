@@ -19,6 +19,7 @@ Organisation par phase :
 - [`docs/exploration/`](docs/exploration/) — Spikes & recherche technique
 - [`docs/decisions/`](docs/decisions/) — ADR (Architecture Decision Records)
 - [`docs/conception/`](docs/conception/) — Phase 3 : UX design, architecture, briefs
+- [`docs/dev/`](docs/dev/) — Phase 4 : plan, briefs de mission, notes de dev
 
 ## Stack
 
