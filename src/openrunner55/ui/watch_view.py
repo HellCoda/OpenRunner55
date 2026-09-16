@@ -209,12 +209,27 @@ class WatchView(Gtk.Box):
         )
         content.append(self._watch_select_all_button)
 
+        # Spinner centré pendant le chargement de la liste (Epic 3, étape 3).
+        self._watch_spinner = Gtk.Spinner()
+        self._watch_spinner.set_halign(Gtk.Align.CENTER)
+        self._watch_spinner.set_valign(Gtk.Align.CENTER)
+        self._watch_spinner.set_vexpand(True)
+        self._watch_spinner.set_visible(False)
+        content.append(self._watch_spinner)
+
         self._watch_list_box = Gtk.ListBox()
         self._watch_list_box.set_selection_mode(Gtk.SelectionMode.NONE)
-        scroll = Gtk.ScrolledWindow()
-        scroll.set_vexpand(True)
-        scroll.set_child(self._watch_list_box)
-        content.append(scroll)
+        self._watch_list_scroll = Gtk.ScrolledWindow()
+        self._watch_list_scroll.set_vexpand(True)
+        self._watch_list_scroll.set_child(self._watch_list_box)
+        content.append(self._watch_list_scroll)
+
+        # Message d'erreur de chargement (générique, caché par défaut).
+        self._watch_error_label = Gtk.Label()
+        self._watch_error_label.add_css_class("error")
+        self._watch_error_label.set_wrap(True)
+        self._watch_error_label.set_visible(False)
+        content.append(self._watch_error_label)
 
         self._watch_sync_button = Gtk.Button(label="↻ Synchroniser (0)")
         self._watch_sync_button.add_css_class("suggested-action")
@@ -239,6 +254,12 @@ class WatchView(Gtk.Box):
                 self._refresh_watch_sending_state
             )
             self._refresh_watch_files()
+            # Chargement de la liste des fichiers montre (threadé dans le
+            # controller). Si la montre est déconnectée, le controller mémorise
+            # les callbacks et diffère le lancement au branchement.
+            self._activities.list_uploadable_files_async(
+                self._on_watch_list_done, self._on_watch_list_error
+            )
 
     # -- rafraîchissements (thread GTK) -------------------------------------
 
@@ -318,7 +339,15 @@ class WatchView(Gtk.Box):
         """Notifié quand la liste des fichiers ou le chargement change."""
         if self._activities is None:
             return
-        self._rebuild_watch_list()
+        if self._activities.is_loading:
+            self._watch_spinner.set_visible(True)
+            self._watch_spinner.start()
+            self._watch_list_scroll.set_visible(False)
+        else:
+            self._watch_spinner.stop()
+            self._watch_spinner.set_visible(False)
+            self._watch_list_scroll.set_visible(True)
+            self._rebuild_watch_list()
         self._update_watch_select_all_label()
         self._refresh_watch_sync_button()
         self._update_watch_zone()
@@ -343,6 +372,9 @@ class WatchView(Gtk.Box):
         connected = self._activities.watch_connected
         self._watch_placeholder.set_visible(not connected)
         self._watch_content.set_visible(connected)
+        if not connected:
+            # L'erreur de chargement n'a plus de sens montre débranchée.
+            self._watch_error_label.set_visible(False)
         count = len(self._activities.files)
         self._watch_subtitle.set_text(f"Fichiers ({count})")
 
@@ -359,6 +391,10 @@ class WatchView(Gtk.Box):
         )
         self._watch_select_all_button.set_label(
             "Tout désélectionner" if all_selected else "Tout sélectionner"
+        )
+        # Inactif pendant le chargement ou liste vide : rien à (dé)sélectionner.
+        self._watch_select_all_button.set_sensitive(
+            not self._activities.is_loading and bool(files)
         )
 
     def _rebuild_watch_list(self) -> None:
@@ -421,6 +457,21 @@ class WatchView(Gtk.Box):
             self._activities.select_none()
         else:
             self._activities.select_all()
+
+    # -- callbacks par-appel du listing (thread GTK via le scheduler) --------
+
+    def _on_watch_list_done(self, _files) -> None:
+        self._watch_error_label.set_visible(False)
+
+    def _on_watch_list_error(self, _exc: Exception) -> None:
+        # Message générique : l'exception brute peut porter des détails USB ou
+        # système ; on n'expose qu'une consigne utilisateur (cohérent UX §4.4,
+        # même discipline que la zone GC).
+        self._watch_error_label.set_text(
+            "Impossible de lire les fichiers de la montre. "
+            "Vérifiez le câble USB et rebranchez la montre FR55."
+        )
+        self._watch_error_label.set_visible(True)
 
     # -- formatage -------------------------------------------------------------
 
