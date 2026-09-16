@@ -1,8 +1,9 @@
 """Tests unitaires de l'UI watch_view.
 
-Seule la logique pure est testée (formatage du résumé d'envoi). L'instanciation
-des widgets GTK nécessite un display — hors périmètre des tests unitaires
-(ADR-008 : tests UI = responsabilité UX, cf. test_auth_view.py).
+Seule la logique pure est testée (formatage du résumé d'envoi, formatage des
+tailles de fichiers). L'instanciation des widgets GTK nécessite un display —
+hors périmètre des tests unitaires (ADR-008 : tests UI = responsabilité UX,
+cf. test_auth_view.py).
 """
 
 from __future__ import annotations
@@ -51,3 +52,23 @@ class TestFormatSummary:
     def test_no_errors_omits_details_block(self) -> None:
         result = SyncResult(total=1, success=0, failed=1, errors=[])
         assert WatchView._format_summary(result) == "Échec de l'envoi."
+
+
+@pytest.mark.unit
+class TestFormatSize:
+    """Formatage des tailles de fichiers (zone Montre, Epic 3)."""
+
+    def test_bytes(self) -> None:
+        assert WatchView._format_size(842) == "842 o"
+
+    def test_zero(self) -> None:
+        assert WatchView._format_size(0) == "0 o"
+
+    def test_kibibytes(self) -> None:
+        assert WatchView._format_size(2048) == "2 Ko"
+
+    def test_mebibytes_one_decimal(self) -> None:
+        assert WatchView._format_size(1_572_864) == "1,5 Mo"
+
+    def test_mebibytes_round_number_no_decimal(self) -> None:
+        assert WatchView._format_size(1024 * 1024) == "1 Mo"

@@ -41,6 +41,7 @@ from openrunner55.store.database import Database
 from openrunner55.store.history import SyncHistoryStore
 from openrunner55.store.logger import OperationLogger
 from openrunner55.store.transfers import TransferredFilesStore
+from openrunner55.ui.activities_controller import ActivitiesController
 from openrunner55.ui.auth_view import AuthView
 from openrunner55.ui.watch_view import WatchView
 from openrunner55.ui.workouts_controller import WorkoutsController
@@ -187,7 +188,19 @@ class OpenRunnerApp(Adw.Application):
             scheduler=GLib.idle_add,
         )
 
-        watch_view = WatchView(controller)
+        # Zone Montre (Epic 3) — même graphe de dépendances, même detector
+        # partagé (les deux controllers s'abonnent indépendamment au signal).
+        activities_controller = ActivitiesController(
+            client=garmin_client,
+            watch_factory=watch_factory,
+            transfers=transfers,
+            history=history,
+            logger=logger,
+            detector=detector,
+            scheduler=GLib.idle_add,
+        )
+
+        watch_view = WatchView(controller, activities_controller)
 
         # -- shell ------------------------------------------------------------
         self._content_stack = Gtk.Stack()
