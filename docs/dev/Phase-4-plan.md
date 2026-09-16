@@ -23,7 +23,8 @@
 | 1 — Auth | Backend + UI login | ✅ Livré (session 1) | `feat/epic-1-auth` | `2a762a0` |
 | 2 — Workouts Cloud → Montre | Backend | ✅ Livré | `feat/epic-2-workouts` | `bd68650` |
 | 2 — Workouts Cloud → Montre | UI (liste, sélection, envoi) | ✅ Livré | `feat/epic-2-frontend` | `221002b` |
-| 3 — Activités Montre → Cloud | Backend + UI | 🔄 Prochain chantier | — | — |
+| 3 — Activités Montre → Cloud | Backend | ✅ Livré | `feat/epic-3-activities` | `b87e3d5` |
+| 3 — Activités Montre → Cloud | UI (liste, sélection, envoi) | 🔄 Prochain chantier (briefé) | — | — |
 | 4 — Historique & logs | UI transverse | ⏳ En attente | — | — |
 | 5 — Robustesse | Retry 429, déconnexion USB, etc. | ⏳ Post-MVP (Should) | — | — |
 
@@ -59,15 +60,20 @@
 
 ### Étape 4 — Epic 3 (Montre → Cloud) 🔄 (prochain)
 
-- Backend : extension `sync/` (service `sync/activities.py` ou similaire),
-  lecture `WatchFilesystem.list_fit_files` sur `Activity/`/`Monitor/`/
-  `Sleep/`/`Metrics/`, upload via `garmin/client.py` (méthode à ajouter).
-- UI : vue « Fichiers de la montre » + bouton « Synchroniser vers GC ».
-- Dépendances : `watch/filesystem.py` (existant), `garmin/client.py`
-  (à étendre), `store/transfers.py` (direction `"up"`).
-- Point ouvert : filtre des fichiers `.FIT` acceptés par GC (US-3.3,
-  Should) — découverte empirique en tests. Démarrer en remontée brute,
-  affiner ensuite.
+- Backend ✅ : `sync/activities.py` (`list_uploadable_files`,
+  `push_activities`), `garmin/client.upload_activity`,
+  `watch/filesystem.absolute_path/file_size`. Contrats figés et validés en
+  réel. Merge `b87e3d5`.
+- Frontend (prochain) : `ui/activities_controller.py` (logique de
+  présentation, pattern `WorkoutsController`), extension `ui/watch_view.py`
+  (zone Montre fonctionnelle : liste, sélection, bouton « Synchroniser vers
+  GC », barre de progression, résumé). Brief : `docs/dev/Epic-3-brief-frontend.md`.
+- Décision UX tranchée : pré-sélection des fichiers `already_transferred=False`,
+  bouton « Tout sélectionner », skip natif côté backend.
+- Dépendances : `sync/activities.py` (existant), `watch/detector.py` (existant),
+  `store/transfers.py` (existant).
+- Point ouvert : filtre des fichiers `.FIT` acceptés par GC (US-3.3, Should) —
+  découverte empirique en tests. Démarrer en remontée brute, affiner ensuite.
 - Gate : tests + revue DP + merge.
 
 ### Étape 5 — Epic 4 (Historique & logs)

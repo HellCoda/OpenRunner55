@@ -1,7 +1,7 @@
 # Contexte — OpenRunner55
 
-- **Dernière mise à jour** : 2026-08-21
-- **Phase** : 4 Développement — Epic 3 backend (Activités Montre → GC) livré et mergé, 205 tests unitaires passent
+- **Dernière mise à jour** : 2026-09-16
+- **Phase** : 4 Développement — Epic 3 backend livré, brief frontend produit, prêt à démarrer le dev frontend
 
 ## Vision
 
@@ -52,9 +52,18 @@ src/openrunner55/
 
 ## Prochaine action
 
-**Epic 3 — Activités Montre → Cloud (frontend)** : UI de la zone Montre (liste des fichiers `list_uploadable_files`, bouton « Synchroniser vers GC » appelant `push_activities` dans un thread worker). Les contrats backend sont figés et validés en réel (smoke montre FR55 + upload GC). Brief de mission frontend à produire.
+**Epic 3 — Activités Montre → Cloud (frontend)** : dev de la zone Montre dans
+`ui/watch_view.py` (liste `list_uploadable_files`, bouton « Synchroniser vers
+GC » appelant `push_activities` dans un thread worker). Brief de mission
+frontend produit : `docs/dev/Epic-3-brief-frontend.md`. Contrats backend figés
+et validés en réel (smoke montre FR55 + upload GC).
 
-**Point de cadrage ouvert (frontend)** : gestion de la « première sync » — l'utilisateur a potentiellement 200+ fichiers sur la montre dont la plupart sont déjà sur GC (via Garmin Express). GC fait la déduplication côté serveur, mais l'UX doit guider l'utilisateur (sélection, pas d'upload massif aveugle).
+**Décision UX tranchée (première sync)** : le backend fournit déjà le drapeau
+`already_transferred` sur chaque `UploadableFile`. L'UI pré-sélectionne les
+fichiers nouveaux (`already_transferred=False`), affiche le statut par ligne,
+et propose un bouton « Tout sélectionner ». Les fichiers déjà transférés sont
+skippés par `push_activities` sans appel API. Cas limite (store vide) accepté :
+GC fait la déduplication côté serveur.
 
 ## Navigation par phase
 
