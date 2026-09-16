@@ -29,6 +29,7 @@ gi.require_version("Adw", "1")
 gi.require_version("Pango", "1.0")
 from gi.repository import Gtk, Pango
 
+from openrunner55.sync.activities import SyncResult as ActivitySyncResult
 from openrunner55.sync.workouts import SyncResult
 from openrunner55.ui.activities_controller import ActivitiesController
 from openrunner55.ui.workouts_controller import WorkoutsController
@@ -234,9 +235,31 @@ class WatchView(Gtk.Box):
         self._watch_sync_button = Gtk.Button(label="↻ Synchroniser (0)")
         self._watch_sync_button.add_css_class("suggested-action")
         self._watch_sync_button.set_sensitive(False)
-        # Le clic (« push_activities_async ») est branché à l'étape 4, avec la
-        # barre de progression et le résumé d'envoi.
+        self._watch_sync_button.connect("clicked", self._on_watch_sync_clicked)
         content.append(self._watch_sync_button)
+
+        # Barre de progression pendant l'envoi (révélée en bas de la zone).
+        self._watch_progress_revealer = Gtk.Revealer()
+        self._watch_progress_revealer.set_transition_type(
+            Gtk.RevealerTransitionType.SLIDE_UP
+        )
+        progress_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self._watch_progress_label = Gtk.Label()
+        self._watch_progress_label.set_wrap(True)
+        self._watch_progress_bar = Gtk.ProgressBar()
+        self._watch_progress_bar.set_show_text(True)
+        progress_box.append(self._watch_progress_label)
+        progress_box.append(self._watch_progress_bar)
+        self._watch_progress_revealer.set_child(progress_box)
+        content.append(self._watch_progress_revealer)
+
+        # Résumé de l'envoi (affiché après coup, détails d'échec inclus).
+        self._watch_summary_label = Gtk.Label()
+        self._watch_summary_label.set_wrap(True)
+        self._watch_summary_label.set_selectable(True)
+        self._watch_summary_label.set_visible(False)
+        self._watch_summary_label.set_xalign(0.0)
+        content.append(self._watch_summary_label)
 
         box.append(content)
         return box
@@ -365,7 +388,41 @@ class WatchView(Gtk.Box):
         if self._activities is None:
             return
         self._refresh_watch_sync_button()
+        self._update_watch_progress()
+        self._update_watch_summary()
         self._update_watch_zone()
+
+    def _update_watch_progress(self) -> None:
+        """Barre de progression « Fichier X/N — {nom} » pendant l'envoi."""
+        progress = self._activities.progress
+        sending = self._activities.is_sending and progress is not None
+        self._watch_progress_revealer.set_reveal_child(sending)
+        if not sending:
+            return
+        current, total, name = progress
+        if name:
+            self._watch_progress_label.set_text(f"Fichier {current}/{total} — {name}")
+        else:
+            self._watch_progress_label.set_text(
+                f"Envoi en cours… ({total} fichiers)"
+            )
+        fraction = current / total if total else 0.0
+        self._watch_progress_bar.set_fraction(fraction)
+        self._watch_progress_bar.set_text(f"{int(fraction * 100)} %")
+
+    def _update_watch_summary(self) -> None:
+        """Résumé après envoi (succès / partiel / total, skippés inclus)."""
+        if self._activities.is_sending:
+            self._watch_summary_label.set_visible(False)
+            return
+        result = self._activities.last_result
+        if result is None:
+            self._watch_summary_label.set_visible(False)
+            return
+        self._watch_summary_label.set_text(
+            self._format_activity_summary(result)
+        )
+        self._watch_summary_label.set_visible(True)
 
     def _update_watch_zone(self) -> None:
         """Bascule placeholder / contenu selon la connexion et le sous-titre."""
@@ -457,6 +514,26 @@ class WatchView(Gtk.Box):
             self._activities.select_none()
         else:
             self._activities.select_all()
+
+    def _on_watch_sync_clicked(self, _button: Gtk.Button) -> None:
+        # L'état (`progress`, `last_result`) est relu par la vue via les
+        # callbacks du controller ; les callbacks par-appel ne servent qu'aux
+        # erreurs fatales (les échecs par fichier sont dans `SyncResult.errors`).
+        self._activities.push_activities_async(
+            on_progress=lambda *_: None,
+            on_done=lambda _result: None,
+            on_error=self._on_watch_push_error,
+        )
+
+    def _on_watch_push_error(self, _exc: Exception) -> None:
+        # Erreur fatale (ex. montre débranchée avant le premier upload) :
+        # message utilisateur, pas l'exception brute (cohérent zone GC).
+        self._watch_summary_label.set_text(
+            "Échec de l'envoi.\n"
+            "La montre a été déconnectée pendant l'opération. "
+            "Rebranchez-la et relancez la synchronisation."
+        )
+        self._watch_summary_label.set_visible(True)
 
     # -- callbacks par-appel du listing (thread GTK via le scheduler) --------
 
@@ -568,6 +645,40 @@ class WatchView(Gtk.Box):
         else:
             failures = "échec" if result.failed == 1 else "échecs"
             text = f"{result.success}/{result.total} envoyés. {result.failed} {failures}."
+        if result.errors:
+            text += "\n" + "\n".join(result.errors)
+        return text
+
+    @staticmethod
+    def _format_activity_summary(result: ActivitySyncResult) -> str:
+        """Formate le résumé d'un envoi Montre → GC (Epic 3, UX §4.1).
+
+        - succès total : « N fichiers envoyés » (+ « · M skippés »)
+        - échec partiel : « X/N envoyés. Y échecs. » (+ « · M skippés »)
+          + détail par erreur
+        - échec total : « Échec de l'envoi. » (+ « · M skippés ») + détail
+
+        Le compte « skippés » (fichiers déjà transférés, ignorés sans appel
+        API) est affiché pour que l'utilisateur comprenne un
+        `success < total - skipped` apparent (contrat backend figé).
+        `SyncResult.errors` contient des chaînes préformatées, affichées
+        telles quelles.
+        """
+        skipped_suffix = f" · {result.skipped} skippés" if result.skipped else ""
+        if result.failed == 0:
+            if result.success == 1:
+                return f"1 fichier envoyé{skipped_suffix}"
+            return f"{result.success} fichiers envoyés{skipped_suffix}"
+        if result.success == 0:
+            text = "Échec de l'envoi."
+        else:
+            failures = "échec" if result.failed == 1 else "échecs"
+            text = (
+                f"{result.success}/{result.total} envoyés. "
+                f"{result.failed} {failures}."
+            )
+        if skipped_suffix:
+            text += skipped_suffix
         if result.errors:
             text += "\n" + "\n".join(result.errors)
         return text

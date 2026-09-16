@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pytest
 
+from openrunner55.sync.activities import SyncResult as ActivitySyncResult
 from openrunner55.sync.workouts import SyncResult
 from openrunner55.ui.watch_view import WatchView
 
@@ -72,3 +73,73 @@ class TestFormatSize:
 
     def test_mebibytes_round_number_no_decimal(self) -> None:
         assert WatchView._format_size(1024 * 1024) == "1 Mo"
+
+
+@pytest.mark.unit
+class TestFormatActivitySummary:
+    """Résumé d'envoi Montre → GC (Epic 3) — succès / skippés / échecs."""
+
+    def test_full_success(self) -> None:
+        result = ActivitySyncResult(
+            total=3, success=3, failed=0, errors=[], skipped=0
+        )
+        assert WatchView._format_activity_summary(result) == "3 fichiers envoyés"
+
+    def test_single_success(self) -> None:
+        result = ActivitySyncResult(
+            total=1, success=1, failed=0, errors=[], skipped=0
+        )
+        assert WatchView._format_activity_summary(result) == "1 fichier envoyé"
+
+    def test_success_with_skipped(self) -> None:
+        result = ActivitySyncResult(
+            total=5, success=2, failed=0, errors=[], skipped=3
+        )
+        assert (
+            WatchView._format_activity_summary(result)
+            == "2 fichiers envoyés · 3 skippés"
+        )
+
+    def test_only_skipped(self) -> None:
+        result = ActivitySyncResult(
+            total=2, success=0, failed=0, errors=[], skipped=2
+        )
+        # failed == 0 → branche succès ; success == 0 → pluriel « 0 fichiers »
+        assert (
+            WatchView._format_activity_summary(result)
+            == "0 fichiers envoyés · 2 skippés"
+        )
+
+    def test_partial_failure_with_skipped_and_details(self) -> None:
+        result = ActivitySyncResult(
+            total=4,
+            success=1,
+            failed=2,
+            errors=["file Activity/a.fit: OSError: x", "file Activity/b.fit: RuntimeError: y"],
+            skipped=1,
+        )
+        text = WatchView._format_activity_summary(result)
+        assert "1/4 envoyés" in text
+        assert "2 échecs" in text
+        assert "1 skippés" in text
+        assert "file Activity/a.fit: OSError: x" in text
+
+    def test_single_failure_wording(self) -> None:
+        result = ActivitySyncResult(
+            total=2, success=1, failed=1, errors=["file Activity/a.fit: E: x"], skipped=0
+        )
+        text = WatchView._format_activity_summary(result)
+        assert "1 échec." in text
+        assert "échecs" not in text.split("\n")[0]
+
+    def test_total_failure_with_details(self) -> None:
+        result = ActivitySyncResult(
+            total=2,
+            success=0,
+            failed=2,
+            errors=["file Activity/a.fit: OSError: x", "file Activity/b.fit: OSError: y"],
+            skipped=0,
+        )
+        text = WatchView._format_activity_summary(result)
+        assert text.startswith("Échec de l'envoi.")
+        assert "file Activity/b.fit: OSError: y" in text
