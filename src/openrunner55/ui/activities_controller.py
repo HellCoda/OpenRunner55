@@ -455,8 +455,12 @@ class ActivitiesController:
     def _on_push_failure(self, on_error: Callable[[Exception], None], exc: Exception) -> None:
         self._is_sending = False
         self._progress = None
-        on_error(exc)
+        # Notifier l'état AVANT on_error : la vue rafraîchit d'abord avec l'état
+        # nettoyé (last_result inchangé), puis on_error écrit le message d'erreur
+        # en dernier — sinon _update_watch_summary masque le message écrit par
+        # _on_watch_push_error (last_result is None → label caché).
         self._notify_sending_state_changed()
+        on_error(exc)
 
     # -- internes de notification -------------------------------------------
 

@@ -601,6 +601,37 @@ class TestPush:
         assert controller.is_sending is False
         assert controller.progress is None
 
+    def test_fatal_error_notifies_sending_state_before_on_error(self) -> None:
+        """Garantit l'ordre : _notify_sending_state_changed AVANT on_error.
+
+        Sans cet ordre, la vue qui rafraîchit l'état (via
+        on_sending_state_changed) écrase le message d'erreur écrit par
+        on_error — l'utilisateur ne voit pas l'échec fatale (régression
+        introduite puis corrigée avant le merge Epic 3 frontend).
+        """
+        f = _uf("a")
+        detector = FakeDetector(connected=True, mount_path=Path("/mnt/GARMIN"))
+        controller = _make_controller(detector=detector)
+        controller._files = [f]
+        controller.toggle_selection(f.path)
+        detector._mount_path = None  # débranchée → _make_watch lève
+
+        order: list[str] = []
+        controller.on_sending_state_changed(lambda: order.append("state"))
+        done = threading.Event()
+
+        controller.push_activities_async(
+            on_progress=lambda *a: None,
+            on_done=lambda r: done.set(),
+            on_error=lambda e: (order.append("error"), done.set()),
+        )
+        _await(done)
+
+        # Le dernier « state » (is_sending=False) doit précéder « error ».
+        assert order[-2:] == ["state", "error"], (
+            f"ordre attendu [..., 'state', 'error'], obtenu {order}"
+        )
+
     def test_push_with_empty_selection_does_nothing(self) -> None:
         controller = self._controller([_uf("a")])
         called = threading.Event()
