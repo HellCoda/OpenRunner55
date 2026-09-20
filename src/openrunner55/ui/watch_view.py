@@ -254,12 +254,19 @@ class WatchView(Gtk.Box):
         content.append(self._watch_progress_revealer)
 
         # Résumé de l'envoi (affiché après coup, détails d'échec inclus).
+        # Wrappé dans un ScrolledWindow à hauteur bornée : avec beaucoup
+        # d'erreurs (ex. 200 doublons 409), le label ne doit pas expandre
+        # la fenêtre entière (régression constatée en validation réelle).
         self._watch_summary_label = Gtk.Label()
         self._watch_summary_label.set_wrap(True)
         self._watch_summary_label.set_selectable(True)
-        self._watch_summary_label.set_visible(False)
         self._watch_summary_label.set_xalign(0.0)
-        content.append(self._watch_summary_label)
+        self._watch_summary_scroll = Gtk.ScrolledWindow()
+        self._watch_summary_scroll.set_child(self._watch_summary_label)
+        self._watch_summary_scroll.set_max_content_height(150)
+        self._watch_summary_scroll.set_propagate_natural_height(True)
+        self._watch_summary_scroll.set_visible(False)
+        content.append(self._watch_summary_scroll)
 
         box.append(content)
         return box
@@ -413,16 +420,16 @@ class WatchView(Gtk.Box):
     def _update_watch_summary(self) -> None:
         """Résumé après envoi (succès / partiel / total, skippés inclus)."""
         if self._activities.is_sending:
-            self._watch_summary_label.set_visible(False)
+            self._watch_summary_scroll.set_visible(False)
             return
         result = self._activities.last_result
         if result is None:
-            self._watch_summary_label.set_visible(False)
+            self._watch_summary_scroll.set_visible(False)
             return
         self._watch_summary_label.set_text(
             self._format_activity_summary(result)
         )
-        self._watch_summary_label.set_visible(True)
+        self._watch_summary_scroll.set_visible(True)
 
     def _update_watch_zone(self) -> None:
         """Bascule placeholder / contenu selon la connexion et le sous-titre."""
@@ -533,7 +540,7 @@ class WatchView(Gtk.Box):
             "La montre a été déconnectée pendant l'opération. "
             "Rebranchez-la et relancez la synchronisation."
         )
-        self._watch_summary_label.set_visible(True)
+        self._watch_summary_scroll.set_visible(True)
 
     # -- callbacks par-appel du listing (thread GTK via le scheduler) --------
 
