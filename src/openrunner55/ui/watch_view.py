@@ -1,41 +1,57 @@
 """Section Activité (couche UI, GTK4/libadwaita).
 
 Conforme `docs/conception/ux-design.md` §4.1 : split horizontal 40/60 entre la
-zone Garmin Connect (gauche, fonctionnelle) et la zone Montre (droite,
-placeholder). Les deux zones sont regroupées dans **un seul panneau unifié**
-(classe `.card`) avec un séparateur vertical fin au milieu — pas de deux cartes
-flottantes séparées par une poignée de `Gtk.Paned`.
+zone Garmin Connect (gauche, Epic 2) et la zone Montre (droite, Epic 3 — sens
+Montre → GC). Les deux zones sont regroupées dans **un seul panneau unifié**
+(classe `.card`) avec une poignée `Gtk.Paned` fine au milieu — pas de deux
+cartes flottantes séparées.
 
-La vue délègue toute la logique de présentation au `WorkoutsController` — les
-widgets GTK restent minces (ADR-002, ADR-008).
+La vue délègue toute la logique de présentation aux controllers —
+`WorkoutsController` (zone GC) et `ActivitiesController` (zone Montre) — les
+widgets GTK restent minces (ADR-002, ADR-008). Sans `activities_controller`,
+la zone Montre retombe sur le comportement placeholder de l'Epic 2.
 
-Threading (brief Epic 2, option A) : la vue ne lance aucun thread elle-même.
-Elle appelle `fetch_workouts_async` / `push_workouts_async` du controller, qui
-lancent les threads et marshallent les callbacks vers le thread GTK via le
-scheduler (`GLib.idle_add`) injecté dans le controller. Les handlers de la vue
+Threading (brief Epic 2/3, option A) : la vue ne lance aucun thread elle-même.
+Elle appelle les méthodes `*_async` des controllers, qui lancent les threads et
+marshallent les callbacks vers le thread GTK via le scheduler
+(`GLib.idle_add`) injecté dans les controllers. Les handlers de la vue
 s'exécutent donc toujours sur le thread GTK.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Gtk
+gi.require_version("Pango", "1.0")
+from gi.repository import Gtk, Pango
 
+from openrunner55.sync.activities import SyncResult as ActivitySyncResult
 from openrunner55.sync.workouts import SyncResult
+from openrunner55.ui.activities_controller import ActivitiesController
 from openrunner55.ui.workouts_controller import WorkoutsController
 
 
 class WatchView(Gtk.Box):
     """Vue « Activité » : zone GC workouts (gauche) + zone Montre (droite)."""
 
-    def __init__(self, controller: WorkoutsController, **kwargs) -> None:
+    def __init__(
+        self,
+        controller: WorkoutsController,
+        activities_controller: ActivitiesController | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0, **kwargs)
         self._controller = controller
+        self._activities = activities_controller
         self._check_by_id: dict[int, Gtk.CheckButton] = {}
         self._syncing = False
+        # -- état de la zone Montre (Epic 3) --
+        self._watch_check_by_path: dict[Path, Gtk.CheckButton] = {}
+        self._watch_syncing = False
         # Marge haute nulle : le panneau s'aligne sur le haut de la barre latérale.
         self.set_margin_bottom(18)
         self.set_margin_start(18)
@@ -140,6 +156,14 @@ class WatchView(Gtk.Box):
         return box
 
     def _build_watch_section(self) -> Gtk.Widget:
+        """Zone Montre (Epic 3) — fonctionnelle si un controller est injecté.
+
+        Structure (UX §4.1) : en-tête « Montre — FR55 » + sous-titre
+        « Fichiers (N) », bouton toggle « Tout sélectionner/désélectionner »,
+        liste des fichiers (checkbox + nom + statut), bouton « ↻ Synchroniser
+        (N) ». Placeholder « Branchez votre montre » quand la montre est
+        déconnectée.
+        """
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         box.set_hexpand(True)
         box.set_margin_top(12)
@@ -147,17 +171,104 @@ class WatchView(Gtk.Box):
         box.set_margin_start(12)
         box.set_margin_end(12)
 
-        header, _ = self._build_header("Montre - FR55", "Activités")
+        if self._activities is None:
+            # Comportement Epic 2 : placeholder (mode sans Epic 3 — tests,
+            # dégradation gracieuse).
+            header, _ = self._build_header("Montre - FR55", "Activités")
+            box.append(header)
+            self._watch_placeholder = Gtk.Label()
+            self._watch_placeholder.add_css_class("dim-label")
+            self._watch_placeholder.set_halign(Gtk.Align.CENTER)
+            self._watch_placeholder.set_valign(Gtk.Align.CENTER)
+            self._watch_placeholder.set_vexpand(True)
+            box.append(self._watch_placeholder)
+            self._update_watch_placeholder()
+            return box
+
+        header, self._watch_subtitle = self._build_header("Montre — FR55", "Fichiers (0)")
         box.append(header)
 
-        self._watch_placeholder = Gtk.Label()
+        # Placeholder montre déconnectée (visible quand non connectée).
+        self._watch_placeholder = Gtk.Label(label="Branchez votre montre FR55 en USB")
         self._watch_placeholder.add_css_class("dim-label")
         self._watch_placeholder.set_halign(Gtk.Align.CENTER)
         self._watch_placeholder.set_valign(Gtk.Align.CENTER)
         self._watch_placeholder.set_vexpand(True)
         box.append(self._watch_placeholder)
 
-        self._update_watch_placeholder()
+        # Contenu de la zone (visible quand la montre est connectée).
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        content.set_vexpand(True)
+        content.set_visible(False)
+        self._watch_content = content
+
+        self._watch_select_all_button = Gtk.Button(label="Tout sélectionner")
+        self._watch_select_all_button.set_halign(Gtk.Align.START)
+        self._watch_select_all_button.add_css_class("flat")
+        self._watch_select_all_button.connect(
+            "clicked", self._on_watch_select_all_clicked
+        )
+        content.append(self._watch_select_all_button)
+
+        # Spinner centré pendant le chargement de la liste (Epic 3, étape 3).
+        self._watch_spinner = Gtk.Spinner()
+        self._watch_spinner.set_halign(Gtk.Align.CENTER)
+        self._watch_spinner.set_valign(Gtk.Align.CENTER)
+        self._watch_spinner.set_vexpand(True)
+        self._watch_spinner.set_visible(False)
+        content.append(self._watch_spinner)
+
+        self._watch_list_box = Gtk.ListBox()
+        self._watch_list_box.set_selection_mode(Gtk.SelectionMode.NONE)
+        self._watch_list_scroll = Gtk.ScrolledWindow()
+        self._watch_list_scroll.set_vexpand(True)
+        self._watch_list_scroll.set_child(self._watch_list_box)
+        content.append(self._watch_list_scroll)
+
+        # Message d'erreur de chargement (générique, caché par défaut).
+        self._watch_error_label = Gtk.Label()
+        self._watch_error_label.add_css_class("error")
+        self._watch_error_label.set_wrap(True)
+        self._watch_error_label.set_visible(False)
+        content.append(self._watch_error_label)
+
+        self._watch_sync_button = Gtk.Button(label="↻ Synchroniser (0)")
+        self._watch_sync_button.add_css_class("suggested-action")
+        self._watch_sync_button.set_sensitive(False)
+        self._watch_sync_button.connect("clicked", self._on_watch_sync_clicked)
+        content.append(self._watch_sync_button)
+
+        # Barre de progression pendant l'envoi (révélée en bas de la zone).
+        self._watch_progress_revealer = Gtk.Revealer()
+        self._watch_progress_revealer.set_transition_type(
+            Gtk.RevealerTransitionType.SLIDE_UP
+        )
+        progress_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self._watch_progress_label = Gtk.Label()
+        self._watch_progress_label.set_wrap(True)
+        self._watch_progress_bar = Gtk.ProgressBar()
+        self._watch_progress_bar.set_show_text(True)
+        progress_box.append(self._watch_progress_label)
+        progress_box.append(self._watch_progress_bar)
+        self._watch_progress_revealer.set_child(progress_box)
+        content.append(self._watch_progress_revealer)
+
+        # Résumé de l'envoi (affiché après coup, détails d'échec inclus).
+        # Wrappé dans un ScrolledWindow à hauteur bornée : avec beaucoup
+        # d'erreurs (ex. 200 doublons 409), le label ne doit pas expandre
+        # la fenêtre entière (régression constatée en validation réelle).
+        self._watch_summary_label = Gtk.Label()
+        self._watch_summary_label.set_wrap(True)
+        self._watch_summary_label.set_selectable(True)
+        self._watch_summary_label.set_xalign(0.0)
+        self._watch_summary_scroll = Gtk.ScrolledWindow()
+        self._watch_summary_scroll.set_child(self._watch_summary_label)
+        self._watch_summary_scroll.set_max_content_height(150)
+        self._watch_summary_scroll.set_propagate_natural_height(True)
+        self._watch_summary_scroll.set_visible(False)
+        content.append(self._watch_summary_scroll)
+
+        box.append(content)
         return box
 
     # -- connexion au controller --------------------------------------------
@@ -166,6 +277,19 @@ class WatchView(Gtk.Box):
         self._controller.on_workouts_changed(self._refresh_workouts)
         self._controller.on_selection_changed(self._refresh_selection)
         self._controller.on_sending_state_changed(self._refresh_sending)
+        if self._activities is not None:
+            self._activities.on_files_changed(self._refresh_watch_files)
+            self._activities.on_selection_changed(self._refresh_watch_selection)
+            self._activities.on_sending_state_changed(
+                self._refresh_watch_sending_state
+            )
+            self._refresh_watch_files()
+            # Chargement de la liste des fichiers montre (threadé dans le
+            # controller). Si la montre est déconnectée, le controller mémorise
+            # les callbacks et diffère le lancement au branchement.
+            self._activities.list_uploadable_files_async(
+                self._on_watch_list_done, self._on_watch_list_error
+            )
 
     # -- rafraîchissements (thread GTK) -------------------------------------
 
@@ -231,10 +355,220 @@ class WatchView(Gtk.Box):
         self._summary_label.set_visible(True)
 
     def _update_watch_placeholder(self) -> None:
+        """Mode legacy (sans controller Montre — Epic 2) : texte du placeholder."""
+        if self._activities is not None:
+            return  # la zone Montre fonctionnelle gère son propre état
         if self._controller.watch_connected:
             self._watch_placeholder.set_text("Réservé à l'Epic 3")
         else:
             self._watch_placeholder.set_text("Branchez votre montre FR55 en USB")
+
+    # -- zone Montre (Epic 3, thread GTK) ------------------------------------
+
+    def _refresh_watch_files(self) -> None:
+        """Notifié quand la liste des fichiers ou le chargement change."""
+        if self._activities is None:
+            return
+        if self._activities.is_loading:
+            self._watch_spinner.set_visible(True)
+            self._watch_spinner.start()
+            self._watch_list_scroll.set_visible(False)
+        else:
+            self._watch_spinner.stop()
+            self._watch_spinner.set_visible(False)
+            self._watch_list_scroll.set_visible(True)
+            self._rebuild_watch_list()
+        self._update_watch_select_all_label()
+        self._refresh_watch_sync_button()
+        self._update_watch_zone()
+
+    def _refresh_watch_selection(self) -> None:
+        """Notifié quand la sélection change : checkboxes + compte + toggle."""
+        if self._activities is None:
+            return
+        self._sync_watch_checkboxes()
+        self._update_watch_select_all_label()
+        self._refresh_watch_sync_button()
+
+    def _refresh_watch_sending_state(self) -> None:
+        """Notifié quand l'envoi ou la connexion montre change."""
+        if self._activities is None:
+            return
+        self._refresh_watch_sync_button()
+        self._update_watch_progress()
+        self._update_watch_summary()
+        self._update_watch_zone()
+
+    def _update_watch_progress(self) -> None:
+        """Barre de progression « Fichier X/N — {nom} » pendant l'envoi."""
+        progress = self._activities.progress
+        sending = self._activities.is_sending and progress is not None
+        self._watch_progress_revealer.set_reveal_child(sending)
+        if not sending:
+            return
+        current, total, name = progress
+        if name:
+            self._watch_progress_label.set_text(f"Fichier {current}/{total} — {name}")
+        else:
+            self._watch_progress_label.set_text(
+                f"Envoi en cours… ({total} fichiers)"
+            )
+        fraction = current / total if total else 0.0
+        self._watch_progress_bar.set_fraction(fraction)
+        self._watch_progress_bar.set_text(f"{int(fraction * 100)} %")
+
+    def _update_watch_summary(self) -> None:
+        """Résumé après envoi (succès / partiel / total, skippés inclus)."""
+        if self._activities.is_sending:
+            self._watch_summary_scroll.set_visible(False)
+            return
+        result = self._activities.last_result
+        if result is None:
+            self._watch_summary_scroll.set_visible(False)
+            return
+        self._watch_summary_label.set_text(
+            self._format_activity_summary(result)
+        )
+        self._watch_summary_scroll.set_visible(True)
+
+    def _update_watch_zone(self) -> None:
+        """Bascule placeholder / contenu selon la connexion et le sous-titre."""
+        connected = self._activities.watch_connected
+        self._watch_placeholder.set_visible(not connected)
+        self._watch_content.set_visible(connected)
+        if not connected:
+            # L'erreur de chargement n'a plus de sens montre débranchée.
+            self._watch_error_label.set_visible(False)
+        count = len(self._activities.files)
+        self._watch_subtitle.set_text(f"Fichiers ({count})")
+
+    def _refresh_watch_sync_button(self) -> None:
+        count = self._activities.selected_count
+        self._watch_sync_button.set_label(f"↻ Synchroniser ({count})")
+        self._watch_sync_button.set_sensitive(self._activities.can_sync)
+
+    def _update_watch_select_all_label(self) -> None:
+        """Le bouton toggle affiche l'action disponible, pas l'état courant."""
+        files = self._activities.files
+        all_selected = bool(files) and (
+            self._activities.selected_count == len(files)
+        )
+        self._watch_select_all_button.set_label(
+            "Tout désélectionner" if all_selected else "Tout sélectionner"
+        )
+        # Inactif pendant le chargement ou liste vide : rien à (dé)sélectionner.
+        self._watch_select_all_button.set_sensitive(
+            not self._activities.is_loading and bool(files)
+        )
+
+    def _rebuild_watch_list(self) -> None:
+        """Reconstruit la liste depuis `activities.files` (une ligne par fichier)."""
+        self._watch_list_box.remove_all()
+        self._watch_check_by_path.clear()
+        selected = self._activities.selected
+        for file in self._activities.files:
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            check = Gtk.CheckButton()
+            # set_active avant de connecter « toggled » pour éviter le rebouclage.
+            check.set_active(file.path in selected)
+            check.set_valign(Gtk.Align.CENTER)
+            check.connect("toggled", self._on_watch_check_toggled, file.path)
+            row_box.append(check)
+
+            texts = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+            texts.set_hexpand(True)
+            name_label = Gtk.Label(label=file.path.name)
+            name_label.set_halign(Gtk.Align.START)
+            name_label.set_ellipsize(Pango.EllipsizeMode.END)
+            secondary = f"{file.category.capitalize()} · {self._format_size(file.size)}"
+            if file.already_transferred:
+                # Indication visuelle du statut : ligne grisée + mention.
+                name_label.add_css_class("dim-label")
+                secondary += " · déjà transféré"
+            status_label = Gtk.Label(label=secondary)
+            status_label.add_css_class("dim-label")
+            status_label.set_halign(Gtk.Align.START)
+            texts.append(name_label)
+            texts.append(status_label)
+            row_box.append(texts)
+
+            row = Gtk.ListBoxRow()
+            row.set_activatable(False)
+            row.set_child(row_box)
+            self._watch_list_box.append(row)
+            self._watch_check_by_path[file.path] = check
+
+    def _sync_watch_checkboxes(self) -> None:
+        """Aligne les checkboxes sur `activities.selected` (sans reboucler)."""
+        self._watch_syncing = True
+        try:
+            selected = self._activities.selected
+            for path, check in self._watch_check_by_path.items():
+                check.set_active(path in selected)
+        finally:
+            self._watch_syncing = False
+
+    # -- gestionnaires zone Montre --------------------------------------------
+
+    def _on_watch_check_toggled(self, check: Gtk.CheckButton, path) -> None:
+        if self._watch_syncing:
+            return
+        self._activities.toggle_selection(path)
+
+    def _on_watch_select_all_clicked(self, _button: Gtk.Button) -> None:
+        files = self._activities.files
+        if files and self._activities.selected_count == len(files):
+            self._activities.select_none()
+        else:
+            self._activities.select_all()
+
+    def _on_watch_sync_clicked(self, _button: Gtk.Button) -> None:
+        # L'état (`progress`, `last_result`) est relu par la vue via les
+        # callbacks du controller ; les callbacks par-appel ne servent qu'aux
+        # erreurs fatales (les échecs par fichier sont dans `SyncResult.errors`).
+        self._activities.push_activities_async(
+            on_progress=lambda *_: None,
+            on_done=lambda _result: None,
+            on_error=self._on_watch_push_error,
+        )
+
+    def _on_watch_push_error(self, _exc: Exception) -> None:
+        # Erreur fatale (ex. montre débranchée avant le premier upload) :
+        # message utilisateur, pas l'exception brute (cohérent zone GC).
+        self._watch_summary_label.set_text(
+            "Échec de l'envoi.\n"
+            "La montre a été déconnectée pendant l'opération. "
+            "Rebranchez-la et relancez la synchronisation."
+        )
+        self._watch_summary_scroll.set_visible(True)
+
+    # -- callbacks par-appel du listing (thread GTK via le scheduler) --------
+
+    def _on_watch_list_done(self, _files) -> None:
+        self._watch_error_label.set_visible(False)
+
+    def _on_watch_list_error(self, _exc: Exception) -> None:
+        # Message générique : l'exception brute peut porter des détails USB ou
+        # système ; on n'expose qu'une consigne utilisateur (cohérent UX §4.4,
+        # même discipline que la zone GC).
+        self._watch_error_label.set_text(
+            "Impossible de lire les fichiers de la montre. "
+            "Vérifiez le câble USB et rebranchez la montre FR55."
+        )
+        self._watch_error_label.set_visible(True)
+
+    # -- formatage -------------------------------------------------------------
+
+    @staticmethod
+    def _format_size(size: int) -> str:
+        """Taille humaine compacte (fr) : « 842 o », « 12 Ko », « 1,4 Mo »."""
+        if size >= 1024 * 1024:
+            value = size / (1024 * 1024)
+            text = f"{value:.1f}".rstrip("0").rstrip(".").replace(".", ",")
+            return f"{text} Mo"
+        if size >= 1024:
+            return f"{size // 1024} Ko"
+        return f"{size} o"
 
     # -- construction de la liste -------------------------------------------
 
@@ -318,6 +652,40 @@ class WatchView(Gtk.Box):
         else:
             failures = "échec" if result.failed == 1 else "échecs"
             text = f"{result.success}/{result.total} envoyés. {result.failed} {failures}."
+        if result.errors:
+            text += "\n" + "\n".join(result.errors)
+        return text
+
+    @staticmethod
+    def _format_activity_summary(result: ActivitySyncResult) -> str:
+        """Formate le résumé d'un envoi Montre → GC (Epic 3, UX §4.1).
+
+        - succès total : « N fichiers envoyés » (+ « · M skippés »)
+        - échec partiel : « X/N envoyés. Y échecs. » (+ « · M skippés »)
+          + détail par erreur
+        - échec total : « Échec de l'envoi. » (+ « · M skippés ») + détail
+
+        Le compte « skippés » (fichiers déjà transférés, ignorés sans appel
+        API) est affiché pour que l'utilisateur comprenne un
+        `success < total - skipped` apparent (contrat backend figé).
+        `SyncResult.errors` contient des chaînes préformatées, affichées
+        telles quelles.
+        """
+        skipped_suffix = f" · {result.skipped} skippés" if result.skipped else ""
+        if result.failed == 0:
+            if result.success == 1:
+                return f"1 fichier envoyé{skipped_suffix}"
+            return f"{result.success} fichiers envoyés{skipped_suffix}"
+        if result.success == 0:
+            text = "Échec de l'envoi."
+        else:
+            failures = "échec" if result.failed == 1 else "échecs"
+            text = (
+                f"{result.success}/{result.total} envoyés. "
+                f"{result.failed} {failures}."
+            )
+        if skipped_suffix:
+            text += skipped_suffix
         if result.errors:
             text += "\n" + "\n".join(result.errors)
         return text
