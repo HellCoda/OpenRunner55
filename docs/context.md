@@ -1,7 +1,7 @@
 # Contexte — OpenRunner55
 
-- **Dernière mise à jour** : 2026-09-16
-- **Phase** : 4 Développement — Epic 3 backend livré, brief frontend produit, prêt à démarrer le dev frontend
+- **Dernière mise à jour** : 2026-09-20
+- **Phase** : 4 Développement — Epic 3 livré (backend + frontend), MVP fonctionnel bout en bout
 
 ## Vision
 
@@ -46,24 +46,28 @@ src/openrunner55/
 | ADR-008 | Stratégie de tests |
 | ADR-009 | Packaging AppImage |
 
-## Périmètre MVP
+## État d'avancement
 
-10 user stories Must, ~7 jours/homme. Condition de validation : un workout créé sur GC est poussé sur la FR55 via USB, et une activité enregistrée sur la montre est remontée sur GC — depuis l'interface GTK. Détail : `docs/cadrage/mvp.md`.
+| Epic | État | Merge |
+|------|------|-------|
+| 1 — Auth | ✅ Livré | `2a762a0` |
+| 2 — Workouts Cloud → Montre | ✅ Livré (backend + frontend) | `bd68650`, `221002b` |
+| 3 — Activités Montre → Cloud | ✅ Livré (backend + frontend) | `b87e3d5`, `f91a7ff` |
+| 4 — Historique & logs | ⏳ Prochain | — |
+| 5 — Robustesse | ⏳ Post-MVP | — |
+
+**Tests** : 248 verts (`pytest tests/ -m unit`).
+**Validation réelle** : Epic 2 (workouts GC → FR55) et Epic 3 (activités FR55 → GC) validés sur montre réelle.
 
 ## Prochaine action
 
-**Epic 3 — Activités Montre → Cloud (frontend)** : dev de la zone Montre dans
-`ui/watch_view.py` (liste `list_uploadable_files`, bouton « Synchroniser vers
-GC » appelant `push_activities` dans un thread worker). Brief de mission
-frontend produit : `docs/dev/Epic-3-brief-frontend.md`. Contrats backend figés
-et validés en réel (smoke montre FR55 + upload GC).
+**Epic 4 — Historique & logs** : UI transverse (vue historique des syncs, vue logs d'opérations). Les stores backend existent depuis Epic 1/2 (`SyncHistoryStore`, `OperationLogger`). Backend quasi-néant — principalement du frontend.
 
-**Décision UX tranchée (première sync)** : le backend fournit déjà le drapeau
-`already_transferred` sur chaque `UploadableFile`. L'UI pré-sélectionne les
-fichiers nouveaux (`already_transferred=False`), affiche le statut par ligne,
-et propose un bouton « Tout sélectionner ». Les fichiers déjà transférés sont
-skippés par `push_activities` sans appel API. Cas limite (store vide) accepté :
-GC fait la déduplication côté serveur.
+**Points ouverts reportés d'Epic 3** (cf. `docs/dev/Epic-3-notes-frontend.md` § Points à trancher) :
+- 409 « Duplicate Activity » traité comme échec au lieu de skip côté backend — gain d'UX majeur pour peu d'effort.
+- Retry 5xx non couvert (ADR-007 couvre 429 seulement).
+- Granularité historique : N entrées « 1/1 » au lieu d'une agrégée — affecte l'UX §4.2.
+- Cosmétique : curseurs `Gtk.Paned`, placement bandeau montre connecté (transverse, hérité Epic 2).
 
 ## Navigation par phase
 
@@ -72,3 +76,4 @@ GC fait la déduplication côté serveur.
 - Exploration (spikes) → `docs/exploration/context.md`
 - Décisions (ADR) → `docs/decisions/context.md`
 - Phase 3 Conception → `docs/conception/context.md`
+- Phase 4 Développement → `docs/dev/Phase-4-plan.md`
