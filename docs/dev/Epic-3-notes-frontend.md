@@ -182,6 +182,24 @@ complet) : OK.
 3. **Pagination** (veille brief, > 200 fichiers) : la `Gtk.ListBox` rend 200
    lignes sans difficulté mesurée ; non testé au-delà. À surveiller en E4.
 
+4. **409 « Duplicate Activity » traité comme échec au lieu de skip**
+   (constaté en validation réelle, 2026-09-20) : le backend
+   `push_activities` catche `GarminConnectConnectionError` 409 dans le
+   `except Exception` générique → compté comme `failed` + message d'erreur
+   affiché. Sémantiquement, c'est un skip (l'activité est déjà sur GC).
+   Sur 213 fichiers avec store SQLite vide (première utilisation), 200
+   ont été marqués échoués alors que les données sont bien sur GC.
+   **Action Epic 4** : catcher le 409 spécifiquement dans `push_activities`
+   → `skipped += 1` + `transfers.mark_transferred` (GC a confirmé la
+   présence). Le résumé afficherait « 13 envoyés · 200 skippés » au lieu
+   de « 13/213 envoyés. 200 échecs. ».
+
+5. **Retry 5xx non couvert** (constaté en validation réelle, 2026-09-20) :
+   une erreur Cloudflare 520 (transitoire, `retryable: true`) a été
+   comptée comme échec. ADR-007 couvre le 429 mais pas les 5xx.
+   **Action Epic 4/5** : étendre le retry/backoff aux 5xx (au moins 520,
+   502, 503) avec le `retry_after` retourné par Garmin.
+
 ---
 
 ## Journal des étapes
