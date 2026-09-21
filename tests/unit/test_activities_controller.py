@@ -148,12 +148,19 @@ def _make_controller(
     transfers: FakeTransfers | None = None,
     detector: FakeDetector | None = None,
 ) -> ActivitiesController:
-    """Construit un controller avec des doublures et un scheduler synchrone."""
+    """Construit un controller avec des doublures et un scheduler synchrone.
+
+    L'auto-sync (Epic 5 chantier 4) est désactivée par défaut : les tests
+    existants testent le listing/push/refresh sans vouloir déclencher
+    l'auto-sync au premier listing. Les tests dédiés (`TestSyncAuto`)
+    construisent leur propre controller via une fabrique séparée qui laisse
+    le flag ``_auto_sync_done`` à ``False``.
+    """
     client = client or FakeClient()
     watch = watch or FakeWatch()
     transfers = transfers or FakeTransfers()
     detector = detector or FakeDetector(connected=True, mount_path=Path("/mnt/GARMIN"))
-    return ActivitiesController(
+    controller = ActivitiesController(
         client=client,
         watch_factory=lambda mount_path: watch,
         transfers=transfers,
@@ -162,6 +169,9 @@ def _make_controller(
         detector=detector,
         # scheduler par défaut : synchrone
     )
+    # Auto-sync désactivée par défaut pour les tests non dédiés.
+    controller._auto_sync_done = True
+    return controller
 
 
 def _await(event: threading.Event, timeout: float = 1.0) -> None:
@@ -907,3 +917,142 @@ class TestWatchStatus:
         assert any(
             cb == controller.on_watch_status_changed for cb in detector.callbacks
         )
+
+
+# --- Sync auto au branchement (Epic 5 chantier 4) -----------------------------
+
+
+@pytest.mark.unit
+class TestSyncAuto:
+    """Sync auto au branchement : déclenchement unique par branchement.
+
+    Approche de test : on override ``push_activities_async`` sur l'instance
+    par un spy qui enregistre les appels sans lancer de thread. Cela évite
+    la non-déterminisme du worker réel (thread, scheduler, refresh auto en
+    cascade) tout en validant que le controller décide correctement
+    d'appeler — ou de ne pas appeler — ``push_activities_async``.
+
+    On valide ainsi la *décision* de déclenchement (garde-fous du brief),
+    pas l'exécution du push elle-même (couverte par ``TestPush``).
+    """
+
+    def _make_with_files(
+        self, files: list[UploadableFile]
+    ) -> tuple[ActivitiesController, FakeLogger, list]:
+        """Controller branché avec un watch qui liste ``files``.
+
+        Retourne (controller, logger, push_calls). ``push_calls`` est rempli
+        à chaque appel de ``push_activities_async`` par l'auto-sync.
+        """
+        files_by_cat: dict[str, list[Path]] = {}
+        for f in files:
+            cat_folder = f.path.parent.name
+            files_by_cat.setdefault(cat_folder, []).append(f.path)
+        watch = FakeWatch(files_by_cat)
+        # Le store reflète l'état already_transferred porté par les fichiers :
+        # list_uploadable_files lit le store pour déterminer le drapeau.
+        transferred_names = {
+            f.path.name for f in files if f.already_transferred
+        }
+        logger = FakeLogger()
+        detector = FakeDetector(connected=True, mount_path=Path("/mnt/GARMIN"))
+        controller = ActivitiesController(
+            client=FakeClient(),
+            watch_factory=lambda mount_path: watch,
+            transfers=FakeTransfers(transferred=transferred_names),
+            history=FakeHistory(),
+            logger=logger,
+            detector=detector,
+        )
+        push_calls: list = []
+        controller.push_activities_async = (  # type: ignore[method-assign]
+            lambda on_progress, on_done, on_error: push_calls.append(
+                (on_progress, on_done, on_error)
+            )
+        )
+        return controller, logger, push_calls
+
+    def _list(self, controller: ActivitiesController) -> None:
+        """Lance un listing et attend sa fin (scheduler synchrone)."""
+        done = threading.Event()
+        controller.list_uploadable_files_async(
+            on_done=lambda files: done.set(),
+            on_error=lambda e: done.set(),
+        )
+        _await(done)
+
+    def test_auto_sync_triggers_on_first_listing_with_new_files(self) -> None:
+        f1, f2, f3 = _uf("a"), _uf("b"), _uf("c")
+        controller, _logger, push_calls = self._make_with_files([f1, f2, f3])
+
+        self._list(controller)
+
+        assert len(push_calls) == 1
+        assert controller.selected == {f1.path, f2.path, f3.path}
+
+    def test_auto_sync_noop_with_no_new_files(self) -> None:
+        old = _uf("deja_la", transferred=True)
+        controller, _logger, push_calls = self._make_with_files([old])
+
+        self._list(controller)
+
+        assert push_calls == []
+        # Le flag est quand même armé : on ne veut pas retry.
+        assert controller._auto_sync_done is True
+
+    def test_auto_sync_noop_if_already_done(self) -> None:
+        f1, f2 = _uf("a"), _uf("b")
+        controller, _logger, push_calls = self._make_with_files([f1, f2])
+
+        self._list(controller)
+        assert len(push_calls) == 1  # premier listing → auto déclenchée
+
+        # Second listing (ex: refresh auto chantier 2) : pas de redéclenchement.
+        self._list(controller)
+        assert len(push_calls) == 1
+
+    def test_auto_sync_rearmed_on_disconnect(self) -> None:
+        f1, f2 = _uf("a"), _uf("b")
+        controller, _logger, push_calls = self._make_with_files([f1, f2])
+
+        # Premier branchement → auto déclenchée.
+        self._list(controller)
+        assert len(push_calls) == 1
+
+        # Débranchement : réarmement du flag.
+        controller.on_watch_status_changed(False)
+        assert controller._auto_sync_done is False
+
+        # Re-branchement → nouvelle auto-sync possible.
+        controller.on_watch_status_changed(True)
+        # on_watch_status_changed(True) relance un listing interne (callbacks
+        # mémorisés) : attendre sa fin.
+        _wait_until(lambda: not controller.is_loading)
+        assert len(push_calls) == 2
+
+    def test_auto_sync_noop_if_sending_in_progress(self) -> None:
+        f1, f2 = _uf("a"), _uf("b")
+        controller, _logger, push_calls = self._make_with_files([f1, f2])
+        # Simule une sync manuelle en cours au moment du listing.
+        controller._is_sending = True
+
+        self._list(controller)
+
+        assert push_calls == []
+        # Le flag est armé malgré tout : on ne retry pas.
+        assert controller._auto_sync_done is True
+
+    def test_auto_sync_logs_trigger(self) -> None:
+        f1, f2, f3 = _uf("a"), _uf("b"), _uf("c")
+        controller, logger, _push_calls = self._make_with_files([f1, f2, f3])
+
+        self._list(controller)
+
+        sync_logs = [
+            entry for entry in logger.logs if entry[0] == "sync.activities"
+        ]
+        assert len(sync_logs) == 1
+        op, status, message = sync_logs[0]
+        assert status == "info"
+        assert "Sync auto déclenchée au branchement" in message
+        assert "3 nouveaux fichiers" in message

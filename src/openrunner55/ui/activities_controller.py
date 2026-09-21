@@ -133,6 +133,14 @@ class ActivitiesController:
         # Cachés par défaut ; l'utilisateur peut les réafficher (en grisé) via
         # le toggle de la vue pour vérifier un envoi antérieur.
         self._hide_transferred: bool = True
+        # Sync auto au branchement (Epic 5 chantier 4) : un seul déclenchement
+        # par branchement. Mis à True après le premier listing réussi post-
+        # branchement (qu'une auto-sync soit déclenchée ou non — on ne veut pas
+        # retry si 0 nouveaux fichiers). Réarmé au débranchement.
+        # Note : si la montre est déjà branchée à l'ouverture de l'app, le
+        # listing lancé à la construction déclenche l'auto-sync — comportement
+        # accepté (cas d'usage « je branche, j'ouvre, ça sync »).
+        self._auto_sync_done: bool = False
 
         # -- callbacks de la vue (pattern observateur) --
         self._on_files_changed_cb: Callable[[], None] | None = None
@@ -318,6 +326,9 @@ class ActivitiesController:
         else:
             self._files = []
             self._selected = set()
+            # Réarmement de l'auto-sync au débranchement (Epic 5 chantier 4) :
+            # le prochain branchement pourra déclencher une nouvelle auto-sync.
+            self._auto_sync_done = False
             self._notify_files_changed()
             self._notify_selection_changed()
         self._notify_sending_state_changed()
@@ -477,6 +488,29 @@ class ActivitiesController:
         self._notify_selection_changed()
         self._list_on_done(files)
         self._notify_files_changed()
+        # Sync auto au branchement (Epic 5, chantier 4) : si c'est le premier
+        # listing réussi depuis le branchement, et qu'il y a des fichiers
+        # nouveaux, déclencher automatiquement l'envoi. Un seul déclenchement
+        # par branchement.
+        if not self._auto_sync_done:
+            self._auto_sync_done = True
+            if self.new_count > 0 and not self._is_sending:
+                self._logger.log(
+                    "sync.activities",
+                    "info",
+                    f"Sync auto déclenchée au branchement ({self.new_count} nouveaux fichiers)",
+                )
+                # L'auto-sync envoie tous les fichiers non transférés (déjà
+                # pré-sélectionnés ci-dessus). Callbacks noop — l'état est
+                # reflété via on_sending_state_changed / on_files_changed.
+                # Le refresh auto (chantier 2) relancera un listing après
+                # l'envoi, mais _auto_sync_done est déjà True → pas de
+                # redéclenchement.
+                self.push_activities_async(
+                    on_progress=lambda *_: None,
+                    on_done=lambda _result: None,
+                    on_error=lambda _exc: None,
+                )
 
     def _on_list_failure(self, exc: Exception) -> None:
         self._is_loading = False
