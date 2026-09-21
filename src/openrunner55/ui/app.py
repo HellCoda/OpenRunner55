@@ -41,8 +41,11 @@ from openrunner55.store.database import Database
 from openrunner55.store.history import SyncHistoryStore
 from openrunner55.store.logger import OperationLogger
 from openrunner55.store.transfers import TransferredFilesStore
+from openrunner55.sync.history import HistoryService
 from openrunner55.ui.activities_controller import ActivitiesController
 from openrunner55.ui.auth_view import AuthView
+from openrunner55.ui.history_controller import HistoryController
+from openrunner55.ui.history_view import HistoryView
 from openrunner55.ui.watch_view import WatchView
 from openrunner55.ui.workouts_controller import WorkoutsController
 from openrunner55.watch.detector import WatchDetector
@@ -91,6 +94,7 @@ class OpenRunnerApp(Adw.Application):
         self._window: Adw.ApplicationWindow | None = None
         self._authenticator = Authenticator()
         self._detector: WatchDetector | None = None
+        self._history_controller: HistoryController | None = None
 
     @staticmethod
     def _load_custom_css() -> None:
@@ -202,12 +206,19 @@ class OpenRunnerApp(Adw.Application):
 
         watch_view = WatchView(controller, activities_controller)
 
+        # Section Logs & Historique (Epic 4) — consultation via le Service
+        # `sync/history.py` (jamais `store/` directement), conformément à
+        # ADR-002. Le chargement initial est déclenché après construction.
+        history_service = HistoryService(history, logger)
+        history_controller = HistoryController(history_service)
+        self._history_controller = history_controller
+        history_view = HistoryView(history_controller)
+        history_controller.refresh()
+
         # -- shell ------------------------------------------------------------
         self._content_stack = Gtk.Stack()
         self._content_stack.add_named(watch_view, "activity")
-        self._content_stack.add_named(
-            self._build_section_placeholder("Logs & Historique"), "logs"
-        )
+        self._content_stack.add_named(history_view, "logs")
         self._content_stack.add_named(
             self._build_section_placeholder("Compte & Paramètres"), "account"
         )
@@ -259,6 +270,10 @@ class OpenRunnerApp(Adw.Application):
         index = row.get_index()
         if 0 <= index < len(_SECTION_NAMES):
             self._content_stack.set_visible_child_name(_SECTION_NAMES[index])
+            # Rafraîchit l'historique/logs à chaque ouverture de la section :
+            # les syncs réalisées dans la section Activité sont aussitôt visibles.
+            if _SECTION_NAMES[index] == "logs" and self._history_controller is not None:
+                self._history_controller.refresh()
 
     # -- indicateur de connexion montre -------------------------------------
 
