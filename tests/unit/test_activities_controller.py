@@ -292,6 +292,96 @@ class TestListState:
         assert [uf.path for uf in controller.files] == [f.path]
 
 
+# --- Refresh (bouton « ↻ » + refresh auto après sync) -------------------------
+
+
+@pytest.mark.unit
+class TestRefreshFiles:
+    def test_refresh_files_relances_listing(self) -> None:
+        """`refresh_files` relance `list_uploadable_files_async` (worker lancé)."""
+        f = _uf("a")
+        watch = FakeWatch({"Activity": [f.path]})
+        controller = _make_controller(watch=watch)
+        # Premier listing (comme le ferait la vue à la construction).
+        first_done = threading.Event()
+        controller.list_uploadable_files_async(
+            on_done=lambda files: first_done.set(),
+            on_error=lambda e: first_done.set(),
+        )
+        _await(first_done)
+        assert watch.list_calls == 4  # 4 catégories
+
+        # Refresh : nouveau listing complet.
+        second_done = threading.Event()
+        controller.on_files_changed(lambda: (
+            second_done.set() if not controller.is_loading else None
+        ))
+        controller.refresh_files()
+        _wait_until(lambda: watch.list_calls == 8)
+        assert controller.is_loading is False
+
+    def test_refresh_files_noop_if_disconnected(self) -> None:
+        """Montre déconnectée : `refresh_files` est un noop (garde du listing)."""
+        f = _uf("a")
+        watch = FakeWatch({"Activity": [f.path]})
+        detector = FakeDetector(connected=False)
+        controller = _make_controller(watch=watch, detector=detector)
+
+        controller.refresh_files()
+        # Aucun thread lancé, aucun appel au listing.
+        assert controller.is_loading is False
+        assert watch.list_calls == 0
+
+
+@pytest.mark.unit
+class TestRefreshAutoAfterSync:
+    def test_refresh_auto_after_successful_sync(self) -> None:
+        """Après un push avec success > 0, le listing est relancé automatiquement."""
+        f = _uf("a")
+        watch = FakeWatch({"Activity": [f.path]})
+        client = FakeClient()
+        controller = _make_controller(watch=watch, client=client)
+        controller._files = [f]
+        controller.toggle_selection(f.path)
+        push_done = threading.Event()
+
+        controller.push_activities_async(
+            on_progress=lambda *a: None,
+            on_done=lambda r: push_done.set(),
+            on_error=lambda e: push_done.set(),
+        )
+        _await(push_done)
+
+        assert controller.last_result is not None
+        assert controller.last_result.success == 1
+        # Le refresh auto a relancé le listing (4 catégories).
+        _wait_until(lambda: watch.list_calls == 4)
+        assert controller.is_loading is False
+
+    def test_no_refresh_auto_after_all_failed_sync(self) -> None:
+        """Après un push avec success == 0, pas de refresh auto du listing."""
+        f = _uf("a")
+        watch = FakeWatch({"Activity": [f.path]})
+        client = FakeClient(fail_names={"a.fit"})
+        controller = _make_controller(watch=watch, client=client)
+        controller._files = [f]
+        controller.toggle_selection(f.path)
+        push_done = threading.Event()
+
+        controller.push_activities_async(
+            on_progress=lambda *a: None,
+            on_done=lambda r: push_done.set(),
+            on_error=lambda e: push_done.set(),
+        )
+        _await(push_done)
+
+        assert controller.last_result is not None
+        assert controller.last_result.success == 0
+        assert controller.last_result.failed == 1
+        # Pas de refresh auto : aucun appel au listing.
+        assert watch.list_calls == 0
+
+
 # --- Pré-sélection automatique -----------------------------------------------
 
 
@@ -452,8 +542,20 @@ class TestCanSync:
 class TestPush:
     def _controller(self, files, client=None, transfers=None):
         detector = FakeDetector(connected=True, mount_path=Path("/mnt/GARMIN"))
+        # Le watch retourne les mêmes fichiers que l'état manuel : le refresh
+        # auto après sync (Epic 5 chantier 2) relance le listing, qui doit
+        # rester cohérent avec les fichiers initialement présents (sinon le
+        # re-listing vide l'état et casse les assertions sur selected/files).
+        files_by_cat: dict[str, list[Path]] = {}
+        for f in files:
+            cat_folder = f.path.parent.name
+            files_by_cat.setdefault(cat_folder, []).append(f.path)
+        watch = FakeWatch(files_by_cat)
         controller = _make_controller(
-            client=client or FakeClient(), transfers=transfers, detector=detector
+            client=client or FakeClient(),
+            transfers=transfers,
+            detector=detector,
+            watch=watch,
         )
         controller._files = list(files)
         return controller
@@ -521,7 +623,9 @@ class TestPush:
         # l'objet UploadableFile (foi du backend), pas du store.
         ok, ko, skip = _uf("ok"), _uf("ko"), _uf("skip", transferred=True)
         client = FakeClient(fail_names={"ko.fit"})
-        transfers = FakeTransfers()
+        # Le store doit être cohérent avec already_transferred=True : le refresh
+        # auto après sync (Epic 5) relance le listing qui lit le store.
+        transfers = FakeTransfers(transferred={"skip.fit"})
         controller = self._controller([ok, ko, skip], client=client, transfers=transfers)
         controller.select_all()
         done = threading.Event()

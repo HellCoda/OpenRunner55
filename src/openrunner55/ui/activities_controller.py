@@ -289,6 +289,16 @@ class ActivitiesController:
         self._notify_files_changed()
         threading.Thread(target=self._list_worker, daemon=True).start()
 
+    def refresh_files(self) -> None:
+        """Relance le listing des fichiers de la montre (bouton « ↻ »).
+
+        Réutilise les callbacks mémorisés par le dernier
+        :meth:`list_uploadable_files_async` (ceux de la vue). Noop si la montre
+        est déconnectée ou si un chargement est déjà en cours (garde
+        anti-re-entrante portée par :meth:`list_uploadable_files_async`).
+        """
+        self.list_uploadable_files_async(self._list_on_done, self._list_on_error)
+
     def push_activities_async(
         self,
         on_progress: Callable[[int, int, str], None],
@@ -451,6 +461,13 @@ class ActivitiesController:
             self._notify_selection_changed()
         on_done(result)
         self._notify_sending_state_changed()
+        # Refresh auto après une sync réussie (au moins un fichier envoyé) :
+        # le re-listing garantit que l'état SQLite est la vérité et rafraîchit
+        # la liste complète (nouveaux fichiers détectés, marquage transféré
+        # consolidé). La garde anti-re-entrante de list_uploadable_files_async
+        # couvre le cas où un chargement serait déjà en cours.
+        if result.success > 0:
+            self.list_uploadable_files_async(self._list_on_done, self._list_on_error)
 
     def _on_push_failure(self, on_error: Callable[[Exception], None], exc: Exception) -> None:
         self._is_sending = False

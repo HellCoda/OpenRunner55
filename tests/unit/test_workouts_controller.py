@@ -222,6 +222,62 @@ class TestFetch:
         assert controller.workouts == []
 
 
+# --- Refresh (bouton « ↻ ») ---------------------------------------------------
+
+
+@pytest.mark.unit
+class TestRefresh:
+    def test_refresh_workouts_relances_fetch(self) -> None:
+        """`refresh_workouts` délègue à `fetch_workouts_async` (worker lancé)."""
+        client = FakeClient(
+            [
+                {"workoutId": 1, "workoutName": "A"},
+            ]
+        )
+        controller = _make_controller(client=client)
+        done = threading.Event()
+
+        controller.refresh_workouts(
+            on_done=lambda w: done.set(),
+            on_error=lambda e: done.set(),
+        )
+        _await(done)
+
+        # Le worker a appelé `get_workouts` du service → listing relancé.
+        assert client.get_workouts_calls == 1
+        assert [w.workout_id for w in controller.workouts] == [1]
+        assert controller.is_loading is False
+
+    def test_refresh_workouts_noop_if_loading(self) -> None:
+        """Refresh pendant un chargement : garde anti-re-entrante, noop."""
+        client = BlockingClient()
+        controller = _make_controller(client=client)
+        first_done = threading.Event()
+
+        controller.fetch_workouts_async(
+            on_done=lambda w: first_done.set(),
+            on_error=lambda e: first_done.set(),
+        )
+        assert client.started.wait(timeout=1)
+        assert controller.is_loading is True
+
+        # Refresh pendant le chargement : la garde `is_loading` court-circuite
+        # `fetch_workouts_async` → aucun second worker lancé. On le vérifie en
+        # confirmant que `is_loading` reste True (le premier fetch est toujours
+        # en cours) et que le `BlockingClient` n'a pas été rappelé (le second
+        # appel aurait remis `started` — ici on vérifie juste l'état du
+        # controller, suffisant car la garde retourne avant tout lancement).
+        controller.refresh_workouts(
+            on_done=lambda w: None,
+            on_error=lambda e: None,
+        )
+        assert controller.is_loading is True  # toujours le premier fetch
+
+        client.release.set()
+        _await(first_done)
+        assert controller.is_loading is False
+
+
 # --- Sélection ---------------------------------------------------------------
 
 
