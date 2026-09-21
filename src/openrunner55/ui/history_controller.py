@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from openrunner55.sync.history import HistoryService, LogRecord, SyncRecord
 
@@ -112,6 +113,27 @@ class HistoryController:
         self._notify_logs_changed()
 
     # -- parsing du détail (logique de présentation) -------------------------
+
+    @staticmethod
+    def format_timestamp(timestamp: str) -> str:
+        """Formate un timestamp SQLite en heure locale « dd/mm/yyyy HH:MM ».
+
+        Le schéma SQLite utilise `DEFAULT (datetime('now'))` qui produit un
+        timestamp **UTC** au format `YYYY-MM-DD HH:MM:SS` (sans info de
+        timezone). On le parse donc comme UTC, puis on convertit en heure
+        locale du système avant de reformater.
+
+        :param timestamp: chaîne SQLite `YYYY-MM-DD HH:MM:SS` (comprise
+            comme UTC). Tout autre format est retourné tel quel.
+        :returns: `dd/mm/yyyy HH:MM` en heure locale, ou la chaîne brute si
+            le format est inattendu (jamais d'exception).
+        """
+        try:
+            dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return timestamp
+        local_dt = dt.replace(tzinfo=timezone.utc).astimezone()
+        return local_dt.strftime("%d/%m/%Y %H:%M")
 
     def parse_record(self, record: SyncRecord) -> SyncRecordDetail:
         """Parse le JSON `details` d'un `SyncRecord` et calcule le total.

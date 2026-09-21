@@ -19,8 +19,6 @@ de s'abonner aux callbacks et de reconstruire ses listes.
 
 from __future__ import annotations
 
-from datetime import datetime
-
 import gi
 
 gi.require_version("Gtk", "4.0")
@@ -187,7 +185,7 @@ class HistoryView(Gtk.Box):
         summary.set_margin_start(8)
         summary.set_margin_end(8)
 
-        date_label = Gtk.Label(label=self._format_timestamp(record.timestamp))
+        date_label = Gtk.Label(label=HistoryController.format_timestamp(record.timestamp))
         date_label.add_css_class("dim-label")
         date_label.set_halign(Gtk.Align.START)
         date_label.set_width_chars(16)
@@ -298,18 +296,6 @@ class HistoryView(Gtk.Box):
             self._controller.set_log_level_filter(level)
 
     # -- formatage -----------------------------------------------------------
-
-    @staticmethod
-    def _format_timestamp(timestamp: str) -> str:
-        """Formate un timestamp SQLite « YYYY-MM-DD HH:MM:SS » en « dd/mm/yyyy HH:MM ».
-
-        Retourne la chaîne telle quelle si le format est inattendu (robustesse).
-        """
-        try:
-            dt = datetime.strptime(timestamp, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            return timestamp
-        return dt.strftime("%d/%m/%Y %H:%M")
 
     @classmethod
     def _direction_symbol(cls, direction: str) -> str:

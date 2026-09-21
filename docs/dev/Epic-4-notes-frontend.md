@@ -109,6 +109,72 @@ verts. Smoke test GTK (display réel) : construction + refresh + filtre OK.
 
 ---
 
+## Étape 4 — Correction bug timezone (commit à venir)
+
+### Bug
+
+Le schéma SQLite (`store/database.py`) utilise `DEFAULT (datetime('now'))`
+pour les colonnes `timestamp` de `sync_history` et `operation_logs`. Or
+`datetime('now')` en SQLite retourne l'**heure UTC** au format
+`YYYY-MM-DD HH:MM:SS` **sans info de timezone**.
+
+Symptôme observé en test réel : un log écrit à 12h33 (heure locale France,
+UTC+2) s'affichait à 10h13 dans la section Logs & Historique. Décalage de
+2h20 (l'écart de 2h de fuseau + les ~20 min écoulées entre écriture et
+consultation). L'Epic 4 affichant ces timestamps tels quels via un simple
+`strptime`/`strftime` (sans conversion), le bug est devenu visible.
+
+### Décision (option B — testabilité, validée par le DP)
+
+1. **Extraire la logique de formatage** de la vue vers le controller :
+   `HistoryView._format_timestamp` (statique, dans `history_view.py`) est
+   déplacée dans `HistoryController.format_timestamp` (statique, dans
+   `history_controller.py`). La vue ne fait qu'appeler
+   `HistoryController.format_timestamp(record.timestamp)`. Pattern cohérent
+   avec le reste de l'Epic 4 : tout le parsing est dans le controller
+   (ADR-002 — le controller est la couche de logique de présentation).
+2. **Ajouter la conversion UTC → heure locale** : le timestamp SQLite est
+   parsé comme UTC (`datetime.strptime(...).replace(tzinfo=timezone.utc)`),
+   puis converti en heure locale du système (`.astimezone()`), puis
+   reformaté en `dd/mm/yyyy HH:MM`. Format de sortie inchangé.
+3. **Robustesse conservée** : si le format est inattendu (`ValueError` au
+   parse), la chaîne brute est retournée telle quelle — jamais d'exception.
+   Comportement identique à l'existant (repli sur la chaîne brute).
+
+### Pourquoi ne pas corriger le schéma SQLite
+
+Le schéma Core est figé (Epic 1). Changer le `DEFAULT` casserait la
+cohérence des timestamps existants (mix UTC/locaux). La correction à
+l'affichage est non invasive.
+
+### Dette technique laissée
+
+**Uniformisation globale des timestamps** : les timestamps existants dans
+la base sont en UTC (cause `datetime('now')`), mais aucun mécanisme ne
+garantit qu'une écriture future restera en UTC si le schéma évolue. La
+conversion à l'affichage traite le symptôme, pas la cause. Le DP traitera
+l'uniformisation globale (stockage UTC explicite avec info de timezone,
+migration des données existantes) dans un chantier séparé.
+
+### Tests
+
+4 tests unitaires ajoutés dans `tests/unit/test_history_controller.py`
+(classe `TestFormatTimestamp`, marqueur `@pytest.mark.unit`) :
+
+- **Conversion UTC → local** : un timestamp UTC `2026-09-21 10:13:00`
+  produit une heure convertie = heure UTC + offset local exact (calculé
+  via `datetime.now().astimezone().utcoffset()`, qui tient compte de
+  l'heure d'été — robuste sur n'importe quelle machine de CI).
+- **Format de sortie** : la structure `dd/mm/yyyy HH:MM` est vérifiée par
+  découpage (date en 3 chunks numériques, temps en 2 chunks numériques).
+- **Repli sur chaîne brute** : `"not a date"` retourné tel quel.
+- **Repli sur format partiel** : `"2026-09-21"` (date seule) retourné tel
+  quel (le parse échoue).
+
+Régression : **273 passed** (269 existants + 4 nouveaux).
+
+---
+
 ## Points à trancher (pour le DP)
 
 1. **Refresh à la navigation (écart ci-dessus)** : j'ai choisi de rafraîchir
@@ -137,9 +203,10 @@ verts. Smoke test GTK (display réel) : construction + refresh + filtre OK.
 | 1 — service | `sync/history.py` + 8 tests | `6b0db64` | 256 |
 | 2 — controller | `ui/history_controller.py` + 13 tests | `9fc22ce` | 269 |
 | 3 — vue + wiring | `ui/history_view.py` + `app.py` | `6d8bf7f` | 269 |
+| 4 — fix timezone | `history_controller.format_timestamp` + 4 tests | (ce commit) | 273 |
 
-**Régression finale** : `pytest tests/ -m unit` → **269 passed** (248 existants
-+ 21 nouveaux : 8 service + 13 controller). Imports `ui.app`, `ui.history_view`,
+**Régression finale** : `pytest tests/ -m unit` → **273 passed** (248 existants
++ 25 nouveaux : 8 service + 13 controller + 4 timezone). Imports `ui.app`, `ui.history_view`,
 `ui.history_controller`, `sync.history` OK. Smoke test GTK (display réel) :
 construction de la vue, refresh, reconstruction des listes, filtre
 ERROR → 1 ligne / Tous → 2 lignes → OK. L'UI n'importe jamais `store/`

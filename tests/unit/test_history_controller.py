@@ -11,6 +11,8 @@ lecture seule, on vérifie ici l'état et les notifications.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from openrunner55.sync.history import LogRecord, SyncRecord
@@ -270,3 +272,61 @@ class TestDefensiveCopy:
         records.append(_record(2))
 
         assert [r.id for r in controller.records] == [1]
+
+
+# --- Formatage du timestamp (UTC → local) ------------------------------------
+
+
+@pytest.mark.unit
+class TestFormatTimestamp:
+    """Conversion UTC → heure locale du timestamp SQLite (option B du DP).
+
+    Le schéma SQLite stocke les timestamps en UTC (`datetime('now')`, sans
+    info de timezone). `format_timestamp` doit les convertir en heure locale
+    avant de les reformater en `dd/mm/yyyy HH:MM`.
+    """
+
+    def test_utc_to_local_offset(self) -> None:
+        """L'heure convertie = heure UTC + offset local exact."""
+        utc_timestamp = "2026-09-21 10:13:00"
+
+        result = HistoryController.format_timestamp(utc_timestamp)
+
+        # Offset local (en secondes) de la machine qui exécute le test.
+        # `datetime.now().astimezone().utcoffset()` tient compte de l'heure
+        # d'été (DST) contrairement à `time.timezone`.
+        utc_dt = datetime(2026, 9, 21, 10, 13, 0, tzinfo=timezone.utc)
+        local_offset = datetime.now().astimezone().utcoffset()
+        assert local_offset is not None  # mypy: l'offset est défini hors UTC pur.
+        expected_local = utc_dt + local_offset
+        expected = expected_local.strftime("%d/%m/%Y %H:%M")
+
+        assert result == expected
+
+    def test_output_format_structure(self) -> None:
+        """La sortie respecte la structure `dd/mm/yyyy HH:MM` (15 caractères)."""
+        result = HistoryController.format_timestamp("2026-09-21 10:13:00")
+
+        # 10/09/2026 11:33 → 16 caractères ; on vérifie le motif par regex.
+        # Format attendu : JJ/MM/AAAA HH:MM
+        parts = result.split(" ")
+        assert len(parts) == 2
+        date_part, time_part = parts
+        date_chunks = date_part.split("/")
+        assert len(date_chunks) == 3
+        assert all(chunk.isdigit() for chunk in date_chunks)
+        time_chunks = time_part.split(":")
+        assert len(time_chunks) == 2
+        assert all(chunk.isdigit() for chunk in time_chunks)
+
+    def test_invalid_format_returns_raw(self) -> None:
+        """Un format inattendu est retourné tel quel (jamais d'exception)."""
+        raw = "not a date"
+
+        assert HistoryController.format_timestamp(raw) == raw
+
+    def test_partial_format_returns_raw(self) -> None:
+        """Un timestamp date seule (sans temps) échoue au parse → retour brut."""
+        raw = "2026-09-21"
+
+        assert HistoryController.format_timestamp(raw) == raw
