@@ -13,6 +13,16 @@ inter-requêtes 3 s — ADR-007).
 `list_uploadable_files` retourne des `UploadableFile` (chemin relatif à
 `GARMIN/`), que le frontend affiche ; `push_activities` reçoit ensuite ces
 mêmes objets sélectionnés (pas de re-listing).
+
+**409 Duplicate Activity** (Epic 5, chantier 1) : Garmin Connect répond 409
+quand le fichier .FIT a déjà été uploadé. La lib `garminconnect` ne lève pas
+d'exception dédiée pour ce cas — `upload_activity` appelle
+`Client._run_request` qui raise `GarminConnectConnectionError("API Error 409
+- ...")` (cf. `garminconnect/client.py`). On catche donc
+`GarminConnectConnectionError` et on matche le message (insensible à la
+casse) sur ``"409"`` ou ``"duplicate"`` pour distinguer un vrai doublon d'une
+erreur réseau générique. Le 409 est un skip sémantique (GC a confirmé la
+présence) : on marque le fichier comme transféré, sans entrée dans `errors`.
 """
 
 from __future__ import annotations
@@ -20,6 +30,8 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+
+from garminconnect import GarminConnectConnectionError
 
 from openrunner55.garmin.client import GarminClient
 from openrunner55.store.history import SyncHistoryStore
@@ -36,6 +48,21 @@ EXCLUDED_CATEGORIES = ("SUMMARY",)
 
 # Sens de la déduplication : montée Montre → GC.
 _DIRECTION = "up"
+
+
+def _is_duplicate_409(exc: Exception) -> bool:
+    """Détecte un 409 Duplicate Activity levé par `garminconnect`.
+
+    La lib ne fournit pas d'exception dédiée pour le 409 (uniquement pour 401,
+    429, 404) : `upload_activity` propage un `GarminConnectConnectionError`
+    dont le message est formaté ``"API Error 409 - ..."``. On matche donc le
+    message insensible à la casse sur ``"409"`` ou ``"duplicate"`` (ce dernier
+    couvre le chemin `import_activity` et une éventuelle évolution de la lib).
+    """
+    if not isinstance(exc, GarminConnectConnectionError):
+        return False
+    message = str(exc).lower()
+    return "409" in message or "duplicate" in message
 
 
 @dataclass
@@ -111,6 +138,9 @@ def push_activities(
     compte `skipped` est reporté dans le `SyncResult`). Le succès est déterminé
     par l'absence d'exception de `upload_activity` (les 4 catégories sont
     validées par le spike S2 ; `detailedImportResult` n'est pas parsé au MVP).
+
+    Un 409 Duplicate Activity de GC est traité comme un skip (le fichier est
+    marqué transféré) — cf. `_is_duplicate_409` et la note module.
     """
     total = len(items)
     if total == 0:
@@ -131,6 +161,24 @@ def push_activities(
             transfers.mark_transferred(item.path.name, _DIRECTION, item.category)
             uploaded_files.append(item.path.name)
             success += 1
+        except GarminConnectConnectionError as exc:
+            # 409 Duplicate Activity : GC a déjà le fichier → skip sémantique.
+            if _is_duplicate_409(exc):
+                skipped += 1
+                transfers.mark_transferred(item.path.name, _DIRECTION, item.category)
+                logger.log(
+                    "sync.activities",
+                    "info",
+                    f"Activity déjà présente sur GC : {item.path}",
+                )
+                continue
+            # Autre erreur de connexion GC (5xx, 4xx non-409) → échec réel.
+            errors.append(f"file {item.path}: {type(exc).__name__}: {exc}")
+            logger.log(
+                "sync.activities",
+                "error",
+                f"Échec upload {item.path}: {exc}",
+            )
         except Exception as exc:  # noqa: BLE001 — on continue au suivant (brief)
             errors.append(f"file {item.path}: {type(exc).__name__}: {exc}")
             logger.log(
