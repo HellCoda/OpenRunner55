@@ -128,6 +128,11 @@ class ActivitiesController:
         self._progress: tuple[int, int, str] | None = None
         self._last_result: SyncResult | None = None
         self._watch_connected: bool = detector.is_connected()
+        # Masquage des fichiers déjà transférés par défaut (Epic 5 chantier 3) :
+        # à chaque sync, plus de 200 fichiers déjà envoyés encombrent la liste.
+        # Cachés par défaut ; l'utilisateur peut les réafficher (en grisé) via
+        # le toggle de la vue pour vérifier un envoi antérieur.
+        self._hide_transferred: bool = True
 
         # -- callbacks de la vue (pattern observateur) --
         self._on_files_changed_cb: Callable[[], None] | None = None
@@ -147,13 +152,62 @@ class ActivitiesController:
 
     @property
     def files(self) -> list[UploadableFile]:
-        """Liste des fichiers uploadables affichés (copie défensive)."""
+        """Liste des fichiers uploadables affichés (copie défensive).
+
+        Quand ``hide_transferred`` est ``True`` (défaut), les fichiers
+        ``already_transferred=True`` sont exclus — ils restent dans
+        ``_files`` (source de vérité pour les compteurs et le push) mais
+        n'apparaissent plus dans la liste affichée. La sélection est tenue à
+        jour par :meth:`set_hide_transferred` pour ne jamais référencer un
+        fichier masqué.
+        """
+        if self._hide_transferred:
+            return [f for f in self._files if not f.already_transferred]
         return list(self._files)
 
     @property
     def is_loading(self) -> bool:
         """True pendant le chargement de la liste (`list_uploadable_files`)."""
         return self._is_loading
+
+    # -- masquage des fichiers transférés (Epic 5 chantier 3) ---------------
+
+    @property
+    def hide_transferred(self) -> bool:
+        """True si les fichiers déjà transférés sont masqués de la liste."""
+        return self._hide_transferred
+
+    @property
+    def transferred_count(self) -> int:
+        """Nombre de fichiers ``already_transferred=True`` (source non filtrée).
+
+        Exposé pour le compteur du sous-titre de la zone Montre : l'utilisateur
+        sait combien de fichiers sont masqués quand ``hide_transferred`` est
+        actif.
+        """
+        return sum(1 for f in self._files if f.already_transferred)
+
+    @property
+    def new_count(self) -> int:
+        """Nombre de fichiers ``already_transferred=False`` (source non filtrée)."""
+        return sum(1 for f in self._files if not f.already_transferred)
+
+    def set_hide_transferred(self, value: bool) -> None:
+        """Active ou désactive le masquage des fichiers déjà transférés.
+
+        Nettoie la sélection : tout chemin qui n'est plus dans la liste filtrée
+        est retiré de ``_selected`` (un fichier masqué ne peut pas rester
+        sélectionné — sinon il serait envoyé au push sans être visible, et le
+        compteur « Synchroniser (N) » serait incohérent avec la liste).
+
+        Notifie la vue via ``on_files_changed`` (la liste affichée change) et
+        ``on_selection_changed`` (la sélection a pu être épurée).
+        """
+        self._hide_transferred = value
+        visible_paths = {f.path for f in self.files}
+        self._selected &= visible_paths
+        self._notify_files_changed()
+        self._notify_selection_changed()
 
     # -- sélection -----------------------------------------------------------
 
@@ -171,12 +225,16 @@ class ActivitiesController:
         self._notify_selection_changed()
 
     def select_all(self) -> None:
-        """Sélectionne tous les fichiers listés (y compris déjà transférés).
+        """Sélectionne tous les fichiers **visibles** (respecte le filtre).
 
-        Les déjà transférés seront skippés par `push_activities` sans appel
-        API (délai 3 s évité, cf. décision de cadrage du brief).
+        Quand ``hide_transferred`` est ``True`` (défaut), seuls les fichiers
+        non transférés sont sélectionnés — les fichiers masqués ne peuvent
+        pas être sélectionnés (cohérent avec :meth:`set_hide_transferred`).
+        Quand ``hide_transferred`` est ``False``, tous les fichiers sont
+        sélectionnés y compris les déjà transférés (qui seront skippés par
+        ``push_activities`` sans appel API).
         """
-        self._selected = {f.path for f in self._files}
+        self._selected = {f.path for f in self.files}
         self._notify_selection_changed()
 
     def select_new_only(self) -> None:

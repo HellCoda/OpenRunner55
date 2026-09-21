@@ -82,12 +82,13 @@ class WatchView(Gtk.Box):
     def _build_header(
         title: str,
         subtitle: str,
-        refresh_button: Gtk.Button | None = None,
+        actions: list[Gtk.Widget] | None = None,
     ) -> tuple[Gtk.Widget, Gtk.Label]:
         """Construit un en-tête de section cohérent (titre + sous-titre grisé).
 
-        Si ``refresh_button`` est fourni, il est placé à droite du titre
-        (layout horizontal : titre/sous-titre à gauche, bouton à droite).
+        Si ``actions`` est fourni, les widgets sont placés à droite du titre
+        (layout horizontal : titre/sous-titre à gauche, actions à droite,
+        dans l'ordre de la liste).
 
         :returns: (widget en-tête, label du sous-titre pour mise à jour éventuelle)
         """
@@ -101,14 +102,15 @@ class WatchView(Gtk.Box):
         title_box.append(title_label)
         title_box.append(subtitle_label)
 
-        if refresh_button is None:
+        if not actions:
             return title_box, subtitle_label
 
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
         title_box.set_hexpand(True)
         header.append(title_box)
-        refresh_button.set_valign(Gtk.Align.CENTER)
-        header.append(refresh_button)
+        for widget in actions:
+            widget.set_valign(Gtk.Align.CENTER)
+            header.append(widget)
         return header, subtitle_label
 
     @staticmethod
@@ -131,7 +133,7 @@ class WatchView(Gtk.Box):
         self._gc_refresh_button = self._make_refresh_button()
         self._gc_refresh_button.connect("clicked", self._on_gc_refresh_clicked)
         header, self._subtitle = self._build_header(
-            "Garmin Connect", "Workouts (0)", self._gc_refresh_button
+            "Garmin Connect", "Workouts (0)", actions=[self._gc_refresh_button]
         )
         box.append(header)
 
@@ -217,8 +219,23 @@ class WatchView(Gtk.Box):
         # Bouton « ↻ » de rafraîchissement de la liste des fichiers montre.
         self._watch_refresh_button = self._make_refresh_button()
         self._watch_refresh_button.connect("clicked", self._on_watch_refresh_clicked)
+        # Toggle « Masquer transférés » (Epic 5 chantier 3) : actif par défaut
+        # car le controller masque les fichiers déjà transférés par défaut.
+        # Quand désactivé, la liste affiche tous les fichiers (les transférés
+        # en grisé, non sélectionnables par défaut via select_all).
+        self._watch_hide_toggle = Gtk.ToggleButton(label="Masquer transférés")
+        self._watch_hide_toggle.add_css_class("flat")
+        self._watch_hide_toggle.set_active(True)
+        self._watch_hide_toggle.set_tooltip_text(
+            "Masquer les fichiers déjà transférés vers Garmin Connect"
+        )
+        self._watch_hide_toggle.connect(
+            "toggled", self._on_watch_hide_transferred_toggled
+        )
         header, self._watch_subtitle = self._build_header(
-            "Montre — FR55", "Fichiers (0)", self._watch_refresh_button
+            "Montre — FR55",
+            "Fichiers (0)",
+            actions=[self._watch_hide_toggle, self._watch_refresh_button],
         )
         box.append(header)
 
@@ -481,9 +498,30 @@ class WatchView(Gtk.Box):
         if not connected:
             # L'erreur de chargement n'a plus de sens montre débranchée.
             self._watch_error_label.set_visible(False)
-        count = len(self._activities.files)
-        self._watch_subtitle.set_text(f"Fichiers ({count})")
+        a = self._activities
+        # Compteur du sous-titre : quand des fichiers transférés sont masqués,
+        # on affiche « N nouveaux · M déjà transférés » pour que l'utilisateur
+        # sache qu'il y a des fichiers cachés (sinon il croirait la liste
+        # exhaustive). Sinon, comportement inchangé « Fichiers (N) ».
+        if a.hide_transferred and a.transferred_count > 0:
+            self._watch_subtitle.set_text(
+                f"{a.new_count} nouveaux · {a.transferred_count} déjà transférés"
+            )
+        else:
+            count = len(a.files)
+            self._watch_subtitle.set_text(f"Fichiers ({count})")
         self._update_watch_refresh_sensitivity()
+        self._update_watch_hide_toggle_sensitivity()
+
+    def _update_watch_hide_toggle_sensitivity(self) -> None:
+        """Toggle « Masquer transférés » inactif s'il n'y a rien à masquer
+        ou pendant un chargement/envoi (pas de bascule en cours d'opération)."""
+        a = self._activities
+        self._watch_hide_toggle.set_sensitive(
+            a.transferred_count > 0
+            and not a.is_loading
+            and not a.is_sending
+        )
 
     def _update_watch_refresh_sensitivity(self) -> None:
         """Bouton « ↻ » Montre inactif si chargement/envoi en cours ou déconnecté."""
@@ -670,6 +708,15 @@ class WatchView(Gtk.Box):
     def _on_watch_refresh_clicked(self, _button: Gtk.Button) -> None:
         """Bouton « ↻ » zone Montre : relance le listing des fichiers."""
         self._activities.refresh_files()
+
+    def _on_watch_hide_transferred_toggled(self, button: Gtk.ToggleButton) -> None:
+        """Toggle « Masquer transférés » : bascule le filtre du controller.
+
+        Le controller notifie ``on_files_changed`` et ``on_selection_changed`` ;
+        la vue rafraîchit la liste, le sous-titre (compteur) et la sélection
+        via les callbacks habituels. Aucune mise à jour manuelle ici.
+        """
+        self._activities.set_hide_transferred(button.get_active())
 
     # -- callbacks par-appel (erreurs uniquement) ---------------------------
 

@@ -419,6 +419,86 @@ class TestPreselection:
         assert controller.selected == set()
 
 
+# --- Masquage des fichiers transférés (Epic 5 chantier 3) ---------------------
+
+
+@pytest.mark.unit
+class TestHideTransferred:
+    def _controller_with_files(self, *files: UploadableFile) -> ActivitiesController:
+        controller = _make_controller()
+        controller._files = list(files)
+        return controller
+
+    def test_hide_transferred_true_by_default(self) -> None:
+        controller = _make_controller()
+        assert controller.hide_transferred is True
+
+    def test_files_filters_transferred_when_hidden(self) -> None:
+        new, old1, old2 = _uf("a"), _uf("b", transferred=True), _uf("c", transferred=True)
+        controller = self._controller_with_files(new, old1, old2)
+        # hide_transferred=True par défaut : seul le nouveau est visible.
+        assert [f.path for f in controller.files] == [new.path]
+
+    def test_files_shows_all_when_not_hidden(self) -> None:
+        new, old1, old2 = _uf("a"), _uf("b", transferred=True), _uf("c", transferred=True)
+        controller = self._controller_with_files(new, old1, old2)
+        controller.set_hide_transferred(False)
+        assert {f.path for f in controller.files} == {new.path, old1.path, old2.path}
+
+    def test_set_hide_transferred_notifies_view(self) -> None:
+        controller = self._controller_with_files(_uf("a"), _uf("b", transferred=True))
+        events: list = []
+        controller.on_files_changed(lambda: events.append("changed"))
+        controller.set_hide_transferred(False)
+        assert events  # au moins une notification files_changed
+
+    def test_selection_cleared_when_file_hidden(self) -> None:
+        """Un fichier transféré sélectionné (via affichage complet) est retiré
+        de la sélection quand on le masque à nouveau."""
+        new, old = _uf("a"), _uf("b", transferred=True)
+        controller = self._controller_with_files(new, old)
+        # Affiche tout, sélectionne tout (y compris old), puis masque.
+        controller.set_hide_transferred(False)
+        controller.select_all()
+        assert old.path in controller.selected
+        controller.set_hide_transferred(True)
+        assert old.path not in controller.selected
+        assert new.path in controller.selected  # le visible reste sélectionné
+
+    def test_select_all_respects_filter(self) -> None:
+        """Avec hide_transferred=True, select_all ne sélectionne que les visibles."""
+        new, old = _uf("a"), _uf("b", transferred=True)
+        controller = self._controller_with_files(new, old)
+        controller.select_all()
+        assert controller.selected == {new.path}
+
+    def test_counts(self) -> None:
+        new1, new2, old1, old2, old3 = (
+            _uf("a"),
+            _uf("b"),
+            _uf("c", transferred=True),
+            _uf("d", transferred=True),
+            _uf("e", transferred=True),
+        )
+        controller = self._controller_with_files(new1, new2, old1, old2, old3)
+        assert controller.new_count == 2
+        assert controller.transferred_count == 3
+
+    def test_counts_on_empty_state(self) -> None:
+        controller = _make_controller()
+        assert controller.new_count == 0
+        assert controller.transferred_count == 0
+
+    def test_set_hide_transferred_to_same_value_is_idempotent(self) -> None:
+        """Réaffirmer la même valeur notifie quand même (pas de garde) — la vue
+        reste cohérente même si le toggle émet « toggled » sans changement."""
+        controller = self._controller_with_files(_uf("a"))
+        events: list = []
+        controller.on_files_changed(lambda: events.append("x"))
+        controller.set_hide_transferred(True)  # déjà True
+        assert len(events) == 1
+
+
 # --- Sélection ----------------------------------------------------------------
 
 
@@ -450,9 +530,12 @@ class TestSelection:
         controller.toggle_selection(f2.path)
         assert controller.selected_count == 1
 
-    def test_select_all_includes_transferred(self) -> None:
+    def test_select_all_includes_transferred_when_shown(self) -> None:
+        """Avec ``hide_transferred=False``, select_all sélectionne y compris
+        les déjà transférés (qui seront skippés au push sans appel API)."""
         f_new, f_old = _uf("a"), _uf("b", transferred=True)
         controller = self._controller_with_files(f_new, f_old)
+        controller.set_hide_transferred(False)
         controller.select_all()
         assert controller.selected == {f_new.path, f_old.path}
 
@@ -627,6 +710,9 @@ class TestPush:
         # auto après sync (Epic 5) relance le listing qui lit le store.
         transfers = FakeTransfers(transferred={"skip.fit"})
         controller = self._controller([ok, ko, skip], client=client, transfers=transfers)
+        # Affiche tous les fichiers (y compris transférés) pour que select_all
+        # les sélectionne tous — par défaut hide_transferred=True masque skip.
+        controller.set_hide_transferred(False)
         controller.select_all()
         done = threading.Event()
 
@@ -671,6 +757,9 @@ class TestPush:
     def test_successful_file_marked_transferred_locally(self) -> None:
         f = _uf("a")
         controller = self._controller([f])
+        # Affiche les transférés : après le push, f est marqué transferred et
+        # disparaîtrait de `files` si hide_transferred=True (filtrage).
+        controller.set_hide_transferred(False)
         controller.toggle_selection(f.path)
         done = threading.Event()
 
