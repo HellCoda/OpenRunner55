@@ -117,8 +117,12 @@ class OpenRunnerApp(Adw.Application):
         self._window.connect("close-request", self._on_close_request)
 
         # Écran de secours immédiat : rien n'est bloquant, la reprise de session
-        # remplacera le contenu si elle réussit.
-        self._window.set_content(self._build_placeholder("Connexion en cours…"))
+        # remplacera le contenu si elle réussit. Enveloppé dans une HeaderBar
+        # pour conserver les contrôles de fenêtre (fermeture possible même si
+        # la reprise échoue ou traîne).
+        self._window.set_content(
+            self._wrap_with_header(self._build_placeholder("Connexion en cours…"))
+        )
         self._window.present()
 
         thread = threading.Thread(target=self._restore_session_worker, daemon=True)
@@ -156,7 +160,7 @@ class OpenRunnerApp(Adw.Application):
             return
         view = AuthView(authenticator=self._authenticator)
         view.connect("authenticated", self._on_authenticated)
-        self._window.set_content(view)
+        self._window.set_content(self._wrap_with_header(view))
 
     def _on_authenticated(self, _view, client) -> None:
         _LOGGER.info("Authentification réussie")
@@ -352,6 +356,20 @@ class OpenRunnerApp(Adw.Application):
         label = Gtk.Label(label=text)
         label.set_margin_top(48)
         return label
+
+    @staticmethod
+    def _wrap_with_header(content: Gtk.Widget) -> Adw.ToolbarView:
+        """Enveloppe `content` dans un ToolbarView avec une HeaderBar vide.
+
+        La HeaderBar fournit les contrôles de fenêtre (minimiser/agrandir/
+        fermer) même quand aucun titre ni bouton supplémentaire n'est requis
+        (écran de login, écran « Connexion en cours… »).
+        """
+        toolbar = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(content)
+        return toolbar
 
 
 def main() -> int:
