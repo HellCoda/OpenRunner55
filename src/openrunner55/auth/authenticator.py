@@ -193,6 +193,11 @@ class Authenticator:
         """Délègue au keyring (ADR-004). Retourne False si keyring indisponible."""
         return self._keyring.save(email, password)
 
+    def get_email(self) -> str | None:
+        """Retourne l'email stocké dans le keyring, ou None si indisponible."""
+        creds = self._keyring.load()
+        return creds[0] if creds else None
+
     def delete_credentials(self) -> bool:
         """Supprime credentials (keyring) et tokenstore. Retourne True si nettoyé."""
         removed = self._keyring.delete()
