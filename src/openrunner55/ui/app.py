@@ -8,11 +8,11 @@ Au démarrage, tente une reprise de session (`resume_session`) dans un thread
 
 Le shell principal post-auth (Epic 2) :
 - `Adw.NavigationSplitView` : navigation latérale 3 sections (Activité, Logs &
-  Historique, Compte & Paramètres). Activité est la section par défaut ; les
-  deux autres sont des placeholders « À venir ».
+  Historique, Compte & Paramètres). Activité est la section par défaut.
 - `Adw.HeaderBar` avec indicateur de connexion montre (puce verte/grise), mis à
   jour via `WatchDetector.on_status_changed`.
-- `WatchDetector.start()` post-auth, `stop()` à la fermeture de la fenêtre.
+- `WatchDetector.start()` post-auth, `stop()` à la fermeture de la fenêtre ou
+  lors d'une déconnexion (`_on_logged_out`).
 
 Composition root : ce module est le point d'entrée qui câble le graphe d'objets
 (ADR-002). Il importe donc les modules Core (`garmin/`, `watch/`, `store/`)
@@ -42,6 +42,7 @@ from openrunner55.store.history import SyncHistoryStore
 from openrunner55.store.logger import OperationLogger
 from openrunner55.store.transfers import TransferredFilesStore
 from openrunner55.sync.history import HistoryService
+from openrunner55.ui.account_view import AccountView
 from openrunner55.ui.activities_controller import ActivitiesController
 from openrunner55.ui.auth_view import AuthView
 from openrunner55.ui.history_controller import HistoryController
@@ -161,6 +162,19 @@ class OpenRunnerApp(Adw.Application):
         _LOGGER.info("Authentification réussie")
         self._show_main_view(client)
 
+    def _on_logged_out(self, _view) -> None:
+        """Déconnexion confirmée depuis la section Compte & Paramètres.
+
+        Stoppe le détecteur USB, libère les controllers et rebascule sur
+        l'écran de login (`auth_view`).
+        """
+        _LOGGER.info("Déconnexion demandée — retour à l'écran de login")
+        if self._detector is not None:
+            self._detector.stop()
+        self._detector = None
+        self._history_controller = None
+        self._show_login_view()
+
     def _show_main_view(self, client) -> None:
         """Construit le shell post-auth (navigation + Activité) et le câble."""
         if self._window is None:
@@ -219,9 +233,9 @@ class OpenRunnerApp(Adw.Application):
         self._content_stack = Gtk.Stack()
         self._content_stack.add_named(watch_view, "activity")
         self._content_stack.add_named(history_view, "logs")
-        self._content_stack.add_named(
-            self._build_section_placeholder("Compte & Paramètres"), "account"
-        )
+        account_view = AccountView(self._authenticator, client)
+        account_view.connect("logged_out", self._on_logged_out)
+        self._content_stack.add_named(account_view, "account")
 
         sidebar = Gtk.ListBox()
         sidebar.add_css_class("navigation-sidebar")
@@ -332,22 +346,6 @@ class OpenRunnerApp(Adw.Application):
         row = Gtk.ListBoxRow()
         row.set_child(label)
         return row
-
-    @staticmethod
-    def _build_section_placeholder(title: str) -> Gtk.Widget:
-        """Placeholder simple pour les sections non couvertes (Epics 3-4)."""
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        box.set_margin_top(24)
-        box.set_margin_start(18)
-        title_label = Gtk.Label(label=title)
-        title_label.add_css_class("title-2")
-        title_label.set_halign(Gtk.Align.START)
-        coming_label = Gtk.Label(label="À venir")
-        coming_label.add_css_class("dim-label")
-        coming_label.set_halign(Gtk.Align.START)
-        box.append(title_label)
-        box.append(coming_label)
-        return box
 
     @staticmethod
     def _build_placeholder(text: str) -> Gtk.Widget:
