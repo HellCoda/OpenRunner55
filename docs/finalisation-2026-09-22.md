@@ -53,21 +53,22 @@ Source : `docs/conception/ux-design.md` §4.3, ADR-002 (`ui/account_view.py`).
 ## Séquences d'exécution
 
 ### Séquence A — Ménage repo (pas de code métier)
-- [ ] Commiter ou gitignorer `tests/test-21-09.txt` et `tests/test-epic3.txt`
-- [ ] Supprimer les branches locales mergées : `feat/epic-4-history`, `feat/epic-5-sync-auto`
-- [ ] Push du commit en attente sur `origin/main`
-- [ ] Mettre à jour `docs/context.md` : Epic 5 mergé (`ea248bc`), état réel, prochaine action
+- [x] Commiter ou gitignorer `tests/test-21-09.txt` et `tests/test-epic3.txt` → déplacés vers `docs/tests-reels/`
+- [x] Supprimer les branches locales mergées : `feat/epic-4-history`, `feat/epic-5-sync-auto`
+- [x] Push du commit en attente sur `origin/main`
+- [x] Mettre à jour `docs/context.md` : Epic 5 mergé (`ea248bc`), état réel, prochaine action
 
 ### Séquence B — Vue Compte & Paramètres (US-1.3)
-- [ ] Créer `src/openrunner55/ui/account_view.py` (3 cartes selon spec §4.3)
-- [ ] Wire dans `app.py` (remplacer le placeholder)
-- [ ] Tests unitaires du contrôleur (si extraction d'un `account_controller.py`)
+- [x] Créer `src/openrunner55/ui/account_view.py` (3 cartes selon spec §4.3)
+- [x] Wire dans `app.py` (remplacer le placeholder)
+- [x] `Authenticator.get_email()` + 2 tests unitaires (300 verts)
+- [x] Merge sur `main` (PR #2, squash `878a9b2`)
 - [ ] Validation réelle : déconnexion → retour écran de login → re-login OK
 
 ### Séquence C — Packaging & publication
 - [ ] AppImage (ADR-009) — agent DevOps/sys-admin
 - [ ] README final (installation, usage, limitations connues)
-- [ ] Licence MIT
+- [ ] Licence MIT (corriger `pyproject.toml` : GPL-3.0 → MIT)
 - [ ] Premier release (tag `v0.1.0`)
 
 ## Items reportés (post-publication, à reprendre si besoin)
