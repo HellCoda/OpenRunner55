@@ -258,7 +258,9 @@ class HistoryView(Gtk.Box):
         row_box.set_margin_top(2)
         row_box.set_margin_bottom(2)
 
-        timestamp_label = Gtk.Label(label=f"[{log.timestamp}]")
+        timestamp_label = Gtk.Label(
+            label=f"[{HistoryController.format_timestamp(log.timestamp)}]"
+        )
         timestamp_label.add_css_class("monospace")
         timestamp_label.add_css_class("dim-label")
         row_box.append(timestamp_label)

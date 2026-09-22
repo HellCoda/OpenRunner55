@@ -1,7 +1,7 @@
 # Contexte — OpenRunner55
 
-- **Dernière mise à jour** : 2026-09-20
-- **Phase** : 4 Développement — Epic 3 livré (backend + frontend), MVP fonctionnel bout en bout
+- **Dernière mise à jour** : 2026-09-21
+- **Phase** : 4 Développement — Epic 5 livré (sync auto & UX quotidienne), MVP+ fonctionnel bout en bout
 
 ## Vision
 
@@ -53,21 +53,26 @@ src/openrunner55/
 | 1 — Auth | ✅ Livré | `2a762a0` |
 | 2 — Workouts Cloud → Montre | ✅ Livré (backend + frontend) | `bd68650`, `221002b` |
 | 3 — Activités Montre → Cloud | ✅ Livré (backend + frontend) | `b87e3d5`, `f91a7ff` |
-| 4 — Historique & logs | ⏳ Prochain | — |
-| 5 — Robustesse | ⏳ Post-MVP | — |
+| 4 — Historique & logs | ✅ Livré | `cab70b9` |
+| 5 — Sync auto & UX quotidienne | ⏳ Prêt pour merge (branche `feat/epic-5-sync-auto`) | — |
 
-**Tests** : 248 verts (`pytest tests/ -m unit`).
-**Validation réelle** : Epic 2 (workouts GC → FR55) et Epic 3 (activités FR55 → GC) validés sur montre réelle.
+**Tests** : 298 verts (`pytest tests/ -m unit`).
+**Validation réelle** : Epic 2 (workouts GC → FR55) et Epic 3 (activités FR55 → GC) validés sur montre réelle. Epic 5 en attente de validation réelle.
 
 ## Prochaine action
 
-**Epic 4 — Historique & logs** : UI transverse (vue historique des syncs, vue logs d'opérations). Les stores backend existent depuis Epic 1/2 (`SyncHistoryStore`, `OperationLogger`). Backend quasi-néant — principalement du frontend.
+**Epic 5 — Sync auto & UX quotidienne** : livré sur la branche
+`feat/epic-5-sync-auto` (4 chantiers, 298 tests verts). Prêt pour merge
+après validation du DP. En attente de validation réelle sur FR55.
 
-**Points ouverts reportés d'Epic 3** (cf. `docs/dev/Epic-3-notes-frontend.md` § Points à trancher) :
-- 409 « Duplicate Activity » traité comme échec au lieu de skip côté backend — gain d'UX majeur pour peu d'effort.
+**Points ouverts reportés** (non traités dans l'Epic 5, cf.
+`docs/dev/Epic-5-notes.md` § Points à trancher) :
+- Dette technique : exception domaine pour le 409 (import direct
+  `garminconnect` dans `sync/activities.py`).
 - Retry 5xx non couvert (ADR-007 couvre 429 seulement).
-- Granularité historique : N entrées « 1/1 » au lieu d'une agrégée — affecte l'UX §4.2.
-- Cosmétique : curseurs `Gtk.Paned`, placement bandeau montre connecté (transverse, hérité Epic 2).
+- Granularité historique : N entrées « 1/1 » au lieu d'une agrégée.
+- Cosmétique : curseurs `Gtk.Paned`, placement bandeau montre connecté.
+- Uniformisation globale des timestamps (stockage UTC vs localtime).
 
 ## Navigation par phase
 

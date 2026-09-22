@@ -244,6 +244,24 @@ class WorkoutsController:
             target=self._fetch_worker, args=(on_done, on_error), daemon=True
         ).start()
 
+    def refresh_workouts(
+        self,
+        on_done: Callable[[list[WorkoutSummary]], None],
+        on_error: Callable[[Exception], None],
+    ) -> None:
+        """Relance le chargement de la liste des workouts (bouton « ↻ »).
+
+        Alias sémantique de :meth:`fetch_workouts_async` : même comportement
+        (garde anti-re-entrante via ``is_loading``), mais nomme l'intention
+        utilisateur (rafraîchir) plutôt que l'opération technique (fetch). La
+        vue connecte le bouton « ↻ » à cette méthode avec les mêmes callbacks
+        que le chargement initial.
+
+        :param on_done: appelé (thread GTK) avec la liste triée des workouts.
+        :param on_error: appelé (thread GTK) en cas d'échec de récupération.
+        """
+        self.fetch_workouts_async(on_done, on_error)
+
     def push_workouts_async(
         self,
         on_progress: Callable[[int, int, str], None],

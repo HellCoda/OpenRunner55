@@ -4,6 +4,22 @@
 > Points hors périmètre Epic 4, à traiter dans des epics/chantiers ultérieurs.
 > Le DP les ventile par priorité et par nature.
 
+## État de traitement
+
+**Epic 5 « Sync auto & UX quotidienne »** (branche `feat/epic-5-sync-auto`)
+a traité les items P1 et P2 ci-dessous. L'item P3 (timestamps) reste en
+maintenance. Détail dans `docs/dev/Epic-5-notes.md`.
+
+| # | Item | Statut | Chantier |
+|---|------|--------|----------|
+| 1 | Sync auto au branchement montre | ✅ Traité (Epic 5) | Chantier 4 |
+| 2 | Détection nouveaux fichiers | ✅ Traité (Epic 5) | Chantier 2 (refresh) |
+| 3 | Grisement fichiers déjà transférés | ✅ Traité (Epic 5) | Chantier 3 |
+| 4 | Refresh liste workouts | ✅ Traité (Epic 5) | Chantier 2 |
+| 5 | Uniformisation timestamps | ⏳ Maintenance | — |
+
+---
+
 ## Contexte
 
 Le 21/09 matin, Franck a testé l'app en conditions réelles (course à pied,
@@ -133,6 +149,12 @@ que l'affichage est corrigé à la source de consommation.
 **Recommandation DP** : traiter 1 et 2 ensemble dans un epic « Sync auto &
 détection » — c'est le cœur du cas d'usage quotidien. 3 et 4 en suivi. 5 en
 maintenance.
+
+**Résolution (21/09/2026)** : Epic 5 « Sync auto & UX quotidienne » a
+traité les items 1 à 4 (4 chantiers, 298 tests verts). L'item 2 s'est
+avéré être non un bug de déduplication mais l'absence de refresh des
+listes — résolu par le chantier 2 (boutons « ↻ » + refresh auto après
+sync). L'item 5 reste en maintenance.
 
 ---
 

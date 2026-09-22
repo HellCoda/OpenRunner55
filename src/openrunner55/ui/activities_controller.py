@@ -128,6 +128,19 @@ class ActivitiesController:
         self._progress: tuple[int, int, str] | None = None
         self._last_result: SyncResult | None = None
         self._watch_connected: bool = detector.is_connected()
+        # Masquage des fichiers déjà transférés par défaut (Epic 5 chantier 3) :
+        # à chaque sync, plus de 200 fichiers déjà envoyés encombrent la liste.
+        # Cachés par défaut ; l'utilisateur peut les réafficher (en grisé) via
+        # le toggle de la vue pour vérifier un envoi antérieur.
+        self._hide_transferred: bool = True
+        # Sync auto au branchement (Epic 5 chantier 4) : un seul déclenchement
+        # par branchement. Mis à True après le premier listing réussi post-
+        # branchement (qu'une auto-sync soit déclenchée ou non — on ne veut pas
+        # retry si 0 nouveaux fichiers). Réarmé au débranchement.
+        # Note : si la montre est déjà branchée à l'ouverture de l'app, le
+        # listing lancé à la construction déclenche l'auto-sync — comportement
+        # accepté (cas d'usage « je branche, j'ouvre, ça sync »).
+        self._auto_sync_done: bool = False
 
         # -- callbacks de la vue (pattern observateur) --
         self._on_files_changed_cb: Callable[[], None] | None = None
@@ -147,13 +160,62 @@ class ActivitiesController:
 
     @property
     def files(self) -> list[UploadableFile]:
-        """Liste des fichiers uploadables affichés (copie défensive)."""
+        """Liste des fichiers uploadables affichés (copie défensive).
+
+        Quand ``hide_transferred`` est ``True`` (défaut), les fichiers
+        ``already_transferred=True`` sont exclus — ils restent dans
+        ``_files`` (source de vérité pour les compteurs et le push) mais
+        n'apparaissent plus dans la liste affichée. La sélection est tenue à
+        jour par :meth:`set_hide_transferred` pour ne jamais référencer un
+        fichier masqué.
+        """
+        if self._hide_transferred:
+            return [f for f in self._files if not f.already_transferred]
         return list(self._files)
 
     @property
     def is_loading(self) -> bool:
         """True pendant le chargement de la liste (`list_uploadable_files`)."""
         return self._is_loading
+
+    # -- masquage des fichiers transférés (Epic 5 chantier 3) ---------------
+
+    @property
+    def hide_transferred(self) -> bool:
+        """True si les fichiers déjà transférés sont masqués de la liste."""
+        return self._hide_transferred
+
+    @property
+    def transferred_count(self) -> int:
+        """Nombre de fichiers ``already_transferred=True`` (source non filtrée).
+
+        Exposé pour le compteur du sous-titre de la zone Montre : l'utilisateur
+        sait combien de fichiers sont masqués quand ``hide_transferred`` est
+        actif.
+        """
+        return sum(1 for f in self._files if f.already_transferred)
+
+    @property
+    def new_count(self) -> int:
+        """Nombre de fichiers ``already_transferred=False`` (source non filtrée)."""
+        return sum(1 for f in self._files if not f.already_transferred)
+
+    def set_hide_transferred(self, value: bool) -> None:
+        """Active ou désactive le masquage des fichiers déjà transférés.
+
+        Nettoie la sélection : tout chemin qui n'est plus dans la liste filtrée
+        est retiré de ``_selected`` (un fichier masqué ne peut pas rester
+        sélectionné — sinon il serait envoyé au push sans être visible, et le
+        compteur « Synchroniser (N) » serait incohérent avec la liste).
+
+        Notifie la vue via ``on_files_changed`` (la liste affichée change) et
+        ``on_selection_changed`` (la sélection a pu être épurée).
+        """
+        self._hide_transferred = value
+        visible_paths = {f.path for f in self.files}
+        self._selected &= visible_paths
+        self._notify_files_changed()
+        self._notify_selection_changed()
 
     # -- sélection -----------------------------------------------------------
 
@@ -171,12 +233,16 @@ class ActivitiesController:
         self._notify_selection_changed()
 
     def select_all(self) -> None:
-        """Sélectionne tous les fichiers listés (y compris déjà transférés).
+        """Sélectionne tous les fichiers **visibles** (respecte le filtre).
 
-        Les déjà transférés seront skippés par `push_activities` sans appel
-        API (délai 3 s évité, cf. décision de cadrage du brief).
+        Quand ``hide_transferred`` est ``True`` (défaut), seuls les fichiers
+        non transférés sont sélectionnés — les fichiers masqués ne peuvent
+        pas être sélectionnés (cohérent avec :meth:`set_hide_transferred`).
+        Quand ``hide_transferred`` est ``False``, tous les fichiers sont
+        sélectionnés y compris les déjà transférés (qui seront skippés par
+        ``push_activities`` sans appel API).
         """
-        self._selected = {f.path for f in self._files}
+        self._selected = {f.path for f in self.files}
         self._notify_selection_changed()
 
     def select_new_only(self) -> None:
@@ -260,6 +326,9 @@ class ActivitiesController:
         else:
             self._files = []
             self._selected = set()
+            # Réarmement de l'auto-sync au débranchement (Epic 5 chantier 4) :
+            # le prochain branchement pourra déclencher une nouvelle auto-sync.
+            self._auto_sync_done = False
             self._notify_files_changed()
             self._notify_selection_changed()
         self._notify_sending_state_changed()
@@ -288,6 +357,16 @@ class ActivitiesController:
         self._is_loading = True
         self._notify_files_changed()
         threading.Thread(target=self._list_worker, daemon=True).start()
+
+    def refresh_files(self) -> None:
+        """Relance le listing des fichiers de la montre (bouton « ↻ »).
+
+        Réutilise les callbacks mémorisés par le dernier
+        :meth:`list_uploadable_files_async` (ceux de la vue). Noop si la montre
+        est déconnectée ou si un chargement est déjà en cours (garde
+        anti-re-entrante portée par :meth:`list_uploadable_files_async`).
+        """
+        self.list_uploadable_files_async(self._list_on_done, self._list_on_error)
 
     def push_activities_async(
         self,
@@ -409,6 +488,29 @@ class ActivitiesController:
         self._notify_selection_changed()
         self._list_on_done(files)
         self._notify_files_changed()
+        # Sync auto au branchement (Epic 5, chantier 4) : si c'est le premier
+        # listing réussi depuis le branchement, et qu'il y a des fichiers
+        # nouveaux, déclencher automatiquement l'envoi. Un seul déclenchement
+        # par branchement.
+        if not self._auto_sync_done:
+            self._auto_sync_done = True
+            if self.new_count > 0 and not self._is_sending:
+                self._logger.log(
+                    "sync.activities",
+                    "info",
+                    f"Sync auto déclenchée au branchement ({self.new_count} nouveaux fichiers)",
+                )
+                # L'auto-sync envoie tous les fichiers non transférés (déjà
+                # pré-sélectionnés ci-dessus). Callbacks noop — l'état est
+                # reflété via on_sending_state_changed / on_files_changed.
+                # Le refresh auto (chantier 2) relancera un listing après
+                # l'envoi, mais _auto_sync_done est déjà True → pas de
+                # redéclenchement.
+                self.push_activities_async(
+                    on_progress=lambda *_: None,
+                    on_done=lambda _result: None,
+                    on_error=lambda _exc: None,
+                )
 
     def _on_list_failure(self, exc: Exception) -> None:
         self._is_loading = False
@@ -451,6 +553,13 @@ class ActivitiesController:
             self._notify_selection_changed()
         on_done(result)
         self._notify_sending_state_changed()
+        # Refresh auto après une sync réussie (au moins un fichier envoyé) :
+        # le re-listing garantit que l'état SQLite est la vérité et rafraîchit
+        # la liste complète (nouveaux fichiers détectés, marquage transféré
+        # consolidé). La garde anti-re-entrante de list_uploadable_files_async
+        # couvre le cas où un chargement serait déjà en cours.
+        if result.success > 0:
+            self.list_uploadable_files_async(self._list_on_done, self._list_on_error)
 
     def _on_push_failure(self, on_error: Callable[[Exception], None], exc: Exception) -> None:
         self._is_sending = False

@@ -148,12 +148,19 @@ def _make_controller(
     transfers: FakeTransfers | None = None,
     detector: FakeDetector | None = None,
 ) -> ActivitiesController:
-    """Construit un controller avec des doublures et un scheduler synchrone."""
+    """Construit un controller avec des doublures et un scheduler synchrone.
+
+    L'auto-sync (Epic 5 chantier 4) est désactivée par défaut : les tests
+    existants testent le listing/push/refresh sans vouloir déclencher
+    l'auto-sync au premier listing. Les tests dédiés (`TestSyncAuto`)
+    construisent leur propre controller via une fabrique séparée qui laisse
+    le flag ``_auto_sync_done`` à ``False``.
+    """
     client = client or FakeClient()
     watch = watch or FakeWatch()
     transfers = transfers or FakeTransfers()
     detector = detector or FakeDetector(connected=True, mount_path=Path("/mnt/GARMIN"))
-    return ActivitiesController(
+    controller = ActivitiesController(
         client=client,
         watch_factory=lambda mount_path: watch,
         transfers=transfers,
@@ -162,6 +169,9 @@ def _make_controller(
         detector=detector,
         # scheduler par défaut : synchrone
     )
+    # Auto-sync désactivée par défaut pour les tests non dédiés.
+    controller._auto_sync_done = True
+    return controller
 
 
 def _await(event: threading.Event, timeout: float = 1.0) -> None:
@@ -292,6 +302,96 @@ class TestListState:
         assert [uf.path for uf in controller.files] == [f.path]
 
 
+# --- Refresh (bouton « ↻ » + refresh auto après sync) -------------------------
+
+
+@pytest.mark.unit
+class TestRefreshFiles:
+    def test_refresh_files_relances_listing(self) -> None:
+        """`refresh_files` relance `list_uploadable_files_async` (worker lancé)."""
+        f = _uf("a")
+        watch = FakeWatch({"Activity": [f.path]})
+        controller = _make_controller(watch=watch)
+        # Premier listing (comme le ferait la vue à la construction).
+        first_done = threading.Event()
+        controller.list_uploadable_files_async(
+            on_done=lambda files: first_done.set(),
+            on_error=lambda e: first_done.set(),
+        )
+        _await(first_done)
+        assert watch.list_calls == 4  # 4 catégories
+
+        # Refresh : nouveau listing complet.
+        second_done = threading.Event()
+        controller.on_files_changed(lambda: (
+            second_done.set() if not controller.is_loading else None
+        ))
+        controller.refresh_files()
+        _wait_until(lambda: watch.list_calls == 8)
+        assert controller.is_loading is False
+
+    def test_refresh_files_noop_if_disconnected(self) -> None:
+        """Montre déconnectée : `refresh_files` est un noop (garde du listing)."""
+        f = _uf("a")
+        watch = FakeWatch({"Activity": [f.path]})
+        detector = FakeDetector(connected=False)
+        controller = _make_controller(watch=watch, detector=detector)
+
+        controller.refresh_files()
+        # Aucun thread lancé, aucun appel au listing.
+        assert controller.is_loading is False
+        assert watch.list_calls == 0
+
+
+@pytest.mark.unit
+class TestRefreshAutoAfterSync:
+    def test_refresh_auto_after_successful_sync(self) -> None:
+        """Après un push avec success > 0, le listing est relancé automatiquement."""
+        f = _uf("a")
+        watch = FakeWatch({"Activity": [f.path]})
+        client = FakeClient()
+        controller = _make_controller(watch=watch, client=client)
+        controller._files = [f]
+        controller.toggle_selection(f.path)
+        push_done = threading.Event()
+
+        controller.push_activities_async(
+            on_progress=lambda *a: None,
+            on_done=lambda r: push_done.set(),
+            on_error=lambda e: push_done.set(),
+        )
+        _await(push_done)
+
+        assert controller.last_result is not None
+        assert controller.last_result.success == 1
+        # Le refresh auto a relancé le listing (4 catégories).
+        _wait_until(lambda: watch.list_calls == 4)
+        assert controller.is_loading is False
+
+    def test_no_refresh_auto_after_all_failed_sync(self) -> None:
+        """Après un push avec success == 0, pas de refresh auto du listing."""
+        f = _uf("a")
+        watch = FakeWatch({"Activity": [f.path]})
+        client = FakeClient(fail_names={"a.fit"})
+        controller = _make_controller(watch=watch, client=client)
+        controller._files = [f]
+        controller.toggle_selection(f.path)
+        push_done = threading.Event()
+
+        controller.push_activities_async(
+            on_progress=lambda *a: None,
+            on_done=lambda r: push_done.set(),
+            on_error=lambda e: push_done.set(),
+        )
+        _await(push_done)
+
+        assert controller.last_result is not None
+        assert controller.last_result.success == 0
+        assert controller.last_result.failed == 1
+        # Pas de refresh auto : aucun appel au listing.
+        assert watch.list_calls == 0
+
+
 # --- Pré-sélection automatique -----------------------------------------------
 
 
@@ -329,6 +429,86 @@ class TestPreselection:
         assert controller.selected == set()
 
 
+# --- Masquage des fichiers transférés (Epic 5 chantier 3) ---------------------
+
+
+@pytest.mark.unit
+class TestHideTransferred:
+    def _controller_with_files(self, *files: UploadableFile) -> ActivitiesController:
+        controller = _make_controller()
+        controller._files = list(files)
+        return controller
+
+    def test_hide_transferred_true_by_default(self) -> None:
+        controller = _make_controller()
+        assert controller.hide_transferred is True
+
+    def test_files_filters_transferred_when_hidden(self) -> None:
+        new, old1, old2 = _uf("a"), _uf("b", transferred=True), _uf("c", transferred=True)
+        controller = self._controller_with_files(new, old1, old2)
+        # hide_transferred=True par défaut : seul le nouveau est visible.
+        assert [f.path for f in controller.files] == [new.path]
+
+    def test_files_shows_all_when_not_hidden(self) -> None:
+        new, old1, old2 = _uf("a"), _uf("b", transferred=True), _uf("c", transferred=True)
+        controller = self._controller_with_files(new, old1, old2)
+        controller.set_hide_transferred(False)
+        assert {f.path for f in controller.files} == {new.path, old1.path, old2.path}
+
+    def test_set_hide_transferred_notifies_view(self) -> None:
+        controller = self._controller_with_files(_uf("a"), _uf("b", transferred=True))
+        events: list = []
+        controller.on_files_changed(lambda: events.append("changed"))
+        controller.set_hide_transferred(False)
+        assert events  # au moins une notification files_changed
+
+    def test_selection_cleared_when_file_hidden(self) -> None:
+        """Un fichier transféré sélectionné (via affichage complet) est retiré
+        de la sélection quand on le masque à nouveau."""
+        new, old = _uf("a"), _uf("b", transferred=True)
+        controller = self._controller_with_files(new, old)
+        # Affiche tout, sélectionne tout (y compris old), puis masque.
+        controller.set_hide_transferred(False)
+        controller.select_all()
+        assert old.path in controller.selected
+        controller.set_hide_transferred(True)
+        assert old.path not in controller.selected
+        assert new.path in controller.selected  # le visible reste sélectionné
+
+    def test_select_all_respects_filter(self) -> None:
+        """Avec hide_transferred=True, select_all ne sélectionne que les visibles."""
+        new, old = _uf("a"), _uf("b", transferred=True)
+        controller = self._controller_with_files(new, old)
+        controller.select_all()
+        assert controller.selected == {new.path}
+
+    def test_counts(self) -> None:
+        new1, new2, old1, old2, old3 = (
+            _uf("a"),
+            _uf("b"),
+            _uf("c", transferred=True),
+            _uf("d", transferred=True),
+            _uf("e", transferred=True),
+        )
+        controller = self._controller_with_files(new1, new2, old1, old2, old3)
+        assert controller.new_count == 2
+        assert controller.transferred_count == 3
+
+    def test_counts_on_empty_state(self) -> None:
+        controller = _make_controller()
+        assert controller.new_count == 0
+        assert controller.transferred_count == 0
+
+    def test_set_hide_transferred_to_same_value_is_idempotent(self) -> None:
+        """Réaffirmer la même valeur notifie quand même (pas de garde) — la vue
+        reste cohérente même si le toggle émet « toggled » sans changement."""
+        controller = self._controller_with_files(_uf("a"))
+        events: list = []
+        controller.on_files_changed(lambda: events.append("x"))
+        controller.set_hide_transferred(True)  # déjà True
+        assert len(events) == 1
+
+
 # --- Sélection ----------------------------------------------------------------
 
 
@@ -360,9 +540,12 @@ class TestSelection:
         controller.toggle_selection(f2.path)
         assert controller.selected_count == 1
 
-    def test_select_all_includes_transferred(self) -> None:
+    def test_select_all_includes_transferred_when_shown(self) -> None:
+        """Avec ``hide_transferred=False``, select_all sélectionne y compris
+        les déjà transférés (qui seront skippés au push sans appel API)."""
         f_new, f_old = _uf("a"), _uf("b", transferred=True)
         controller = self._controller_with_files(f_new, f_old)
+        controller.set_hide_transferred(False)
         controller.select_all()
         assert controller.selected == {f_new.path, f_old.path}
 
@@ -452,8 +635,20 @@ class TestCanSync:
 class TestPush:
     def _controller(self, files, client=None, transfers=None):
         detector = FakeDetector(connected=True, mount_path=Path("/mnt/GARMIN"))
+        # Le watch retourne les mêmes fichiers que l'état manuel : le refresh
+        # auto après sync (Epic 5 chantier 2) relance le listing, qui doit
+        # rester cohérent avec les fichiers initialement présents (sinon le
+        # re-listing vide l'état et casse les assertions sur selected/files).
+        files_by_cat: dict[str, list[Path]] = {}
+        for f in files:
+            cat_folder = f.path.parent.name
+            files_by_cat.setdefault(cat_folder, []).append(f.path)
+        watch = FakeWatch(files_by_cat)
         controller = _make_controller(
-            client=client or FakeClient(), transfers=transfers, detector=detector
+            client=client or FakeClient(),
+            transfers=transfers,
+            detector=detector,
+            watch=watch,
         )
         controller._files = list(files)
         return controller
@@ -521,8 +716,13 @@ class TestPush:
         # l'objet UploadableFile (foi du backend), pas du store.
         ok, ko, skip = _uf("ok"), _uf("ko"), _uf("skip", transferred=True)
         client = FakeClient(fail_names={"ko.fit"})
-        transfers = FakeTransfers()
+        # Le store doit être cohérent avec already_transferred=True : le refresh
+        # auto après sync (Epic 5) relance le listing qui lit le store.
+        transfers = FakeTransfers(transferred={"skip.fit"})
         controller = self._controller([ok, ko, skip], client=client, transfers=transfers)
+        # Affiche tous les fichiers (y compris transférés) pour que select_all
+        # les sélectionne tous — par défaut hide_transferred=True masque skip.
+        controller.set_hide_transferred(False)
         controller.select_all()
         done = threading.Event()
 
@@ -567,6 +767,9 @@ class TestPush:
     def test_successful_file_marked_transferred_locally(self) -> None:
         f = _uf("a")
         controller = self._controller([f])
+        # Affiche les transférés : après le push, f est marqué transferred et
+        # disparaîtrait de `files` si hide_transferred=True (filtrage).
+        controller.set_hide_transferred(False)
         controller.toggle_selection(f.path)
         done = threading.Event()
 
@@ -714,3 +917,142 @@ class TestWatchStatus:
         assert any(
             cb == controller.on_watch_status_changed for cb in detector.callbacks
         )
+
+
+# --- Sync auto au branchement (Epic 5 chantier 4) -----------------------------
+
+
+@pytest.mark.unit
+class TestSyncAuto:
+    """Sync auto au branchement : déclenchement unique par branchement.
+
+    Approche de test : on override ``push_activities_async`` sur l'instance
+    par un spy qui enregistre les appels sans lancer de thread. Cela évite
+    la non-déterminisme du worker réel (thread, scheduler, refresh auto en
+    cascade) tout en validant que le controller décide correctement
+    d'appeler — ou de ne pas appeler — ``push_activities_async``.
+
+    On valide ainsi la *décision* de déclenchement (garde-fous du brief),
+    pas l'exécution du push elle-même (couverte par ``TestPush``).
+    """
+
+    def _make_with_files(
+        self, files: list[UploadableFile]
+    ) -> tuple[ActivitiesController, FakeLogger, list]:
+        """Controller branché avec un watch qui liste ``files``.
+
+        Retourne (controller, logger, push_calls). ``push_calls`` est rempli
+        à chaque appel de ``push_activities_async`` par l'auto-sync.
+        """
+        files_by_cat: dict[str, list[Path]] = {}
+        for f in files:
+            cat_folder = f.path.parent.name
+            files_by_cat.setdefault(cat_folder, []).append(f.path)
+        watch = FakeWatch(files_by_cat)
+        # Le store reflète l'état already_transferred porté par les fichiers :
+        # list_uploadable_files lit le store pour déterminer le drapeau.
+        transferred_names = {
+            f.path.name for f in files if f.already_transferred
+        }
+        logger = FakeLogger()
+        detector = FakeDetector(connected=True, mount_path=Path("/mnt/GARMIN"))
+        controller = ActivitiesController(
+            client=FakeClient(),
+            watch_factory=lambda mount_path: watch,
+            transfers=FakeTransfers(transferred=transferred_names),
+            history=FakeHistory(),
+            logger=logger,
+            detector=detector,
+        )
+        push_calls: list = []
+        controller.push_activities_async = (  # type: ignore[method-assign]
+            lambda on_progress, on_done, on_error: push_calls.append(
+                (on_progress, on_done, on_error)
+            )
+        )
+        return controller, logger, push_calls
+
+    def _list(self, controller: ActivitiesController) -> None:
+        """Lance un listing et attend sa fin (scheduler synchrone)."""
+        done = threading.Event()
+        controller.list_uploadable_files_async(
+            on_done=lambda files: done.set(),
+            on_error=lambda e: done.set(),
+        )
+        _await(done)
+
+    def test_auto_sync_triggers_on_first_listing_with_new_files(self) -> None:
+        f1, f2, f3 = _uf("a"), _uf("b"), _uf("c")
+        controller, _logger, push_calls = self._make_with_files([f1, f2, f3])
+
+        self._list(controller)
+
+        assert len(push_calls) == 1
+        assert controller.selected == {f1.path, f2.path, f3.path}
+
+    def test_auto_sync_noop_with_no_new_files(self) -> None:
+        old = _uf("deja_la", transferred=True)
+        controller, _logger, push_calls = self._make_with_files([old])
+
+        self._list(controller)
+
+        assert push_calls == []
+        # Le flag est quand même armé : on ne veut pas retry.
+        assert controller._auto_sync_done is True
+
+    def test_auto_sync_noop_if_already_done(self) -> None:
+        f1, f2 = _uf("a"), _uf("b")
+        controller, _logger, push_calls = self._make_with_files([f1, f2])
+
+        self._list(controller)
+        assert len(push_calls) == 1  # premier listing → auto déclenchée
+
+        # Second listing (ex: refresh auto chantier 2) : pas de redéclenchement.
+        self._list(controller)
+        assert len(push_calls) == 1
+
+    def test_auto_sync_rearmed_on_disconnect(self) -> None:
+        f1, f2 = _uf("a"), _uf("b")
+        controller, _logger, push_calls = self._make_with_files([f1, f2])
+
+        # Premier branchement → auto déclenchée.
+        self._list(controller)
+        assert len(push_calls) == 1
+
+        # Débranchement : réarmement du flag.
+        controller.on_watch_status_changed(False)
+        assert controller._auto_sync_done is False
+
+        # Re-branchement → nouvelle auto-sync possible.
+        controller.on_watch_status_changed(True)
+        # on_watch_status_changed(True) relance un listing interne (callbacks
+        # mémorisés) : attendre sa fin.
+        _wait_until(lambda: not controller.is_loading)
+        assert len(push_calls) == 2
+
+    def test_auto_sync_noop_if_sending_in_progress(self) -> None:
+        f1, f2 = _uf("a"), _uf("b")
+        controller, _logger, push_calls = self._make_with_files([f1, f2])
+        # Simule une sync manuelle en cours au moment du listing.
+        controller._is_sending = True
+
+        self._list(controller)
+
+        assert push_calls == []
+        # Le flag est armé malgré tout : on ne retry pas.
+        assert controller._auto_sync_done is True
+
+    def test_auto_sync_logs_trigger(self) -> None:
+        f1, f2, f3 = _uf("a"), _uf("b"), _uf("c")
+        controller, logger, _push_calls = self._make_with_files([f1, f2, f3])
+
+        self._list(controller)
+
+        sync_logs = [
+            entry for entry in logger.logs if entry[0] == "sync.activities"
+        ]
+        assert len(sync_logs) == 1
+        op, status, message = sync_logs[0]
+        assert status == "info"
+        assert "Sync auto déclenchée au branchement" in message
+        assert "3 nouveaux fichiers" in message

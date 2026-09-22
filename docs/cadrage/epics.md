@@ -86,23 +86,33 @@ Découpage du PRD en 5 epics. Chaque epic couvre un ensemble cohérent d'exigenc
 
 ---
 
-## Epic 5 — Robustesse & gestion d'erreurs
+## Epic 5 — Sync auto & UX quotidienne
 
-**Objectif** — L'application gère les erreurs réseau, API et USB sans perte de données ni blocage.
+> **Note** : l'Epic 5 a été redéfini lors du tranchage du backlog
+> post-Epic 4 (21/09/2026). Le périmètre initial « Robustesse & gestion
+> d'erreurs » a été élargi pour inclure les features issues des tests
+> réels (sync auto, refresh, grisement). Les items de robustesse pure
+> (retry 5xx, déconnexion USB) restent en maintenance.
+
+**Objectif** — L'application sync automatiquement au branchement de la
+montre, rafraîchit ses listes à la demande, et masque les fichiers déjà
+transférés. Le cas d'usage quotidien « je branche, ça sync » est couvert.
 
 **Périmètre**
-- Dans : retry 429, gestion déconnexion USB, notifications d'erreur, intégrité des transferts.
-- Hors : logique fonctionnelle de sync.
-
-**Exigences couvertes** : EF-19, EF-20, ENF-2, ENF-6
+- Dans : sync auto au branchement (sens montant), refresh manuel des
+  listes (workouts + fichiers), refresh auto après sync, masquage des
+  fichiers déjà transférés, 409 Duplicate → skip.
+- Hors : sync auto descendante (workouts), retry 5xx, uniformisation
+  timestamps (maintenance).
 
 **User stories**
 
 | ID | Story | Critères d'acceptance |
 |----|-------|----------------------|
-| US-5.1 | En tant qu'utilisateur, je veux que l'application gère le rate limiting (429) automatiquement afin de ne pas avoir à relancer manuellement. | 1. En cas d'erreur 429, l'app réessaie avec un backoff exponentiel. 2. L'utilisateur est informé du délai d'attente. 3. Après épuisement des retries, l'opération est marquée en échec avec un message clair. |
-| US-5.2 | En tant qu'utilisateur, je veux être notifié si ma montre est débranchée en cours de transfert afin de comprendre ce qui s'est passé. | 1. La déconnexion USB en cours de transfert est détectée. 2. L'opération est interrompue proprement. 3. Les fichiers déjà transférés sont conservés ; les fichiers en cours sont signalés comme incomplets. |
-| US-5.3 | En tant qu'utilisateur, je veux qu'aucune donnée ne soit perdue en cas d'échec partiel d'une sync. | 1. Les fichiers réussis et échoués sont listés séparément. 2. Les fichiers échoués peuvent être relancés individuellement. 3. L'état de chaque fichier est persistant jusqu'à la prochaine sync. |
+| US-5.1 | En tant qu'utilisateur, je veux que l'application sync automatiquement au branchement de la montre afin de ne pas avoir à déclencher manuellement. | 1. Au branchement USB, la liste des fichiers est chargée. 2. S'il y a des fichiers nouveaux, l'envoi vers GC se déclenche automatiquement. 3. La barre de progression reflète la sync auto. 4. Un seul déclenchement par branchement. 5. Si une sync manuelle est en cours, l'auto est ignorée. |
+| US-5.2 | En tant qu'utilisateur, je veux rafraîchir manuellement les listes afin de voir les nouveaux fichiers sans rouvrir l'app. | 1. Un bouton « ↻ » dans la zone GC relance le chargement des workouts. 2. Un bouton « ↻ » dans la zone Montre relance le listing des fichiers. 3. La liste se rafraîchit automatiquement après une sync réussie. |
+| US-5.3 | En tant qu'utilisateur, je veux que les fichiers déjà transférés soient masqués par défaut afin de ne pas voir 200 fichiers inutiles à chaque sync. | 1. Les fichiers `already_transferred` sont masqués par défaut. 2. Un toggle « Masquer transférés » permet de les réafficher en grisé. 3. Un compteur indique « N nouveaux · M déjà transférés ». |
+| US-5.4 | En tant qu'utilisateur, je veux qu'un fichier déjà présent sur GC soit marqué comme skip et non comme échec. | 1. Un 409 Duplicate Activity est traité comme skip (pas d'erreur). 2. Le fichier est marqué comme transféré dans le store local. 3. Le résumé affiche « M skippés » au lieu de « M échecs ». |
 
 ---
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from garminconnect import GarminConnectConnectionError
 
 from openrunner55.sync.activities import (
     UPLOADABLE_CATEGORIES,
@@ -343,3 +344,83 @@ class TestPushActivities:
         assert "user@example.com" not in details
         assert "secret" not in details
         assert "[REDACTED]" in details
+
+    # --- 409 Duplicate Activity → skip (Epic 5, chantier 1) -------------------
+
+    def test_409_treated_as_skip(self) -> None:
+        # La lib garminconnect lève GarminConnectConnectionError("API Error 409 - ...")
+        # sur un 409 Duplicate Activity (cf. note module sync/activities.py).
+        client = FakeClient(
+            results={"a.fit": GarminConnectConnectionError("API Error 409 - duplicate")}
+        )
+        transfers = FakeTransfers()
+        history = FakeHistory()
+        logger = FakeLogger()
+
+        result = push_activities(
+            client, FakeWatch(), transfers, history, logger,
+            [_item("Activity/a.fit")],
+        )
+
+        assert result.skipped == 1
+        assert result.failed == 0
+        assert result.success == 0
+        assert result.errors == []
+        # GC a confirmé la présence → on marque le fichier comme transféré.
+        assert transfers.marked == [("a.fit", "up", "activity", None)]
+        # Log info (pas d'erreur) mentionnant le fichier.
+        assert any(
+            status == "info" and "a.fit" in message
+            for _, status, message in logger.logs
+        )
+        assert not any(
+            status == "error" for _, status, _ in logger.logs
+        )
+
+    def test_409_mixed_with_success(self) -> None:
+        client = FakeClient(
+            results={"a.fit": GarminConnectConnectionError("API Error 409 - duplicate")}
+        )
+        result = push_activities(
+            client, FakeWatch(), FakeTransfers(), FakeHistory(), FakeLogger(),
+            [_item("Activity/a.fit"), _item("Activity/b.fit")],
+        )
+
+        assert result.skipped == 1
+        assert result.success == 1
+        assert result.failed == 0
+        assert result.errors == []
+
+    def test_409_mixed_with_real_failure(self) -> None:
+        client = FakeClient(
+            results={
+                "a.fit": GarminConnectConnectionError("API Error 409 - duplicate"),
+                "b.fit": OSError("déconnexion USB"),
+            }
+        )
+        result = push_activities(
+            client, FakeWatch(), FakeTransfers(), FakeHistory(), FakeLogger(),
+            [_item("Activity/a.fit"), _item("Activity/b.fit")],
+        )
+
+        assert result.skipped == 1
+        assert result.failed == 1
+        assert result.success == 0
+        assert len(result.errors) == 1
+        assert "b.fit" in result.errors[0]
+
+    def test_non_409_connection_error_still_failed(self) -> None:
+        # Garde-fou : une GarminConnectConnectionError dont le message ne
+        # contient ni "409" ni "duplicate" reste un échec (pas de skip).
+        client = FakeClient(
+            results={"a.fit": GarminConnectConnectionError("API Error 503 - unavailable")}
+        )
+        result = push_activities(
+            client, FakeWatch(), FakeTransfers(), FakeHistory(), FakeLogger(),
+            [_item("Activity/a.fit")],
+        )
+
+        assert result.failed == 1
+        assert result.skipped == 0
+        assert result.success == 0
+        assert len(result.errors) == 1
