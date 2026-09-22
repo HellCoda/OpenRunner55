@@ -273,3 +273,15 @@ class TestCredentials:
         assert auth.delete_credentials() is True
         assert not token_file.exists()
         assert fake_keyring.deleted is True
+
+
+@pytest.mark.unit
+class TestGetEmail:
+    def test_get_email_returns_email_when_keyring_has_one(self, fake_keyring) -> None:
+        auth = Authenticator(keyring=fake_keyring)
+        auth.save_credentials("user@example.com", "password")
+        assert auth.get_email() == "user@example.com"
+
+    def test_get_email_returns_none_when_keyring_empty(self, fake_keyring) -> None:
+        auth = Authenticator(keyring=fake_keyring)
+        assert auth.get_email() is None
