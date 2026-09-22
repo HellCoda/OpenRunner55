@@ -22,6 +22,8 @@
 | Dette 409 (`garminconnect` dans `sync/`) | **Reporté** | Fonctionne, isolé, pas de fuite |
 | Sync auto descendante (workouts GC → montre) | **Reporté** | Hors scope MVP+ |
 | Audit approfondi du projet | **Écarté** | Fonctionnalités et UI validées en réel |
+| Licence | **MIT** (validé 22/09) | Usage perso open-source, compatible, simple. Corrige `pyproject.toml` (GPL-3.0 → MIT) en séquence C |
+| Modification email/mdp dans la vue | **Écarté** (validé 22/09) | Géré côté Garmin Connect. La vue se contente de déconnexion → re-login |
 
 ## Périmètre de la vue Compte & Paramètres (US-1.3)
 

@@ -23,7 +23,7 @@ conforme à `docs/conception/ux-design.md` §4.3.
 | Email affiché | Lecture depuis le keyring (source de vérité des identifiants), fallback `client.display_name`. |
 | Déconnexion | `authenticator.delete_credentials()` (existe déjà), puis signal `logged_out`. |
 | Pas de controller dédié | La vue est statique + une action simple. Elle reçoit les dépendances injectées, comme `auth_view`. |
-| Licence affichée | **MIT** (à confirmer avant publication — constante centralisée, facile à changer). |
+| Licence affichée | **MIT** (décision DP validée par Franck le 22/09 — constante centralisée). |
 | Lien GitHub | `https://github.com/HellCoda/OpenRunner55` |
 
 ## Périmètre
