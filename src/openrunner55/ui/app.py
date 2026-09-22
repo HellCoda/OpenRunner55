@@ -112,7 +112,7 @@ class OpenRunnerApp(Adw.Application):
         self._load_custom_css()
         self._window = Adw.ApplicationWindow(application=app)
         self._window.set_title("OpenRunner55")
-        self._window.set_default_size(900, 600)
+        self._window.set_default_size(1100, 750)
         self._window.connect("close-request", self._on_close_request)
 
         # Écran de secours immédiat : rien n'est bloquant, la reprise de session
@@ -286,6 +286,7 @@ class OpenRunnerApp(Adw.Application):
         bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
         bar.add_css_class("garmin-bar")
         bar.set_hexpand(True)
+        bar.set_margin_bottom(12)
         bar.append(self._build_watch_indicator())
         spacer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         spacer.set_hexpand(True)
