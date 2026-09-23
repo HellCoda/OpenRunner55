@@ -22,3 +22,7 @@ spike-*/
 # OS
 .DS_Store
 Thumbs.db
+
+# Build AppImage (ADR-009)
+build/
+dist/
