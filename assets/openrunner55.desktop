@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=OpenRunner55
+Comment=Synchronisation Garmin Connect ↔ Forerunner 55
+Icon=openrunner55
+Exec=openrunner55
+Categories=Utility;Sports;
+Terminal=false
