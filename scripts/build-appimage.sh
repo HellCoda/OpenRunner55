@@ -223,6 +223,33 @@ export GDK_PIXBUF_MODULEDIR="\${HERE}/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders"
 export GTK_EXE_NAME="${APP_LOWER}"
 # Les répertoires de données utilisateur restent ceux de l'hôte (~/.local/share).
 
+# --- Intégration desktop (icône dock GNOME) ----------------------------------
+# GNOME Wayland résout l'icône du dock via l'application_id GTK
+# (io.github.openrunner55). Pour que l'association fonctionne, un .desktop
+# nommé <application_id>.desktop et une icône doivent être installés dans les
+# chemins XDG de l'utilisateur. On le fait silencieusement à chaque lancement
+# (idempotent) — sans échec en cas de répertoire absent.
+APPIMAGE_PATH="\${APPIMAGE:-\$(readlink -f "\$0")}"
+if [[ -n "\${HOME:-}" ]]; then
+    APPS_DIR="\$HOME/.local/share/applications"
+    ICONS_DIR="\$HOME/.local/share/icons/hicolor/256x256/apps"
+    mkdir -p "\$APPS_DIR" "\$ICONS_DIR"
+    # .desktop : on réécrit Exec= pour pointer vers l'AppImage (pas AppRun).
+    if [[ -f "\${HERE}/${APP_LOWER}.desktop" ]]; then
+        sed "s|^Exec=.*|Exec=\${APPIMAGE_PATH} %F|" "\${HERE}/${APP_LOWER}.desktop" \
+            > "\$APPS_DIR/io.github.openrunner55.desktop"
+    fi
+    # Icône.
+    if [[ -f "\${HERE}/${APP_LOWER}.png" ]]; then
+        cp -f "\${HERE}/${APP_LOWER}.png" "\$ICONS_DIR/${APP_LOWER}.png"
+    fi
+    # Rafraîchissement des caches (silencieux si commande absente).
+    command -v update-desktop-database >/dev/null 2>&1 && \
+        update-desktop-database "\$APPS_DIR" 2>/dev/null || true
+    command -v gtk-update-icon-cache >/dev/null 2>&1 && \
+        gtk-update-icon-cache "\$HOME/.local/share/icons/hicolor/" 2>/dev/null || true
+fi
+
 exec "\${HERE}/usr/bin/python${PYTHON_VERSION}" -m openrunner55 "\$@"
 APPRUN
 chmod +x "$APPDIR/AppRun"
