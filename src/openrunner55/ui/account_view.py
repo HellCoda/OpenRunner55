@@ -36,7 +36,7 @@ _LOGGER = logging.getLogger(__name__)
 # Licence (décision DP validée par Franck le 22/09 — constante centralisée).
 LICENSE = "MIT"
 
-GITHUB_URL = "https://github.com/HellCoda/OpenRunner55"
+GITHUB_URL = "https://github.com/fr4nk-crux/OpenRunner55"
 
 _KEYRING_DISPLAY = "GNOME Keyring (session)"
 
